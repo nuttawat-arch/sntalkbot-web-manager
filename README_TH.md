@@ -1,4 +1,4 @@
-# SNTalkBot Web Manager 1.1.5
+# SNTalkBot Web Manager 1.1.7
 
 เว็บแดชบอร์ด self-hosted สำหรับจัดการ SNTalkBot และ TTUHelper หลาย instance โดยไม่ต้องพิมพ์คำสั่ง Linux ทุกครั้ง เหมาะกับเครื่อง Ubuntu/Debian ที่รัน SNTalkBot/TTUHelper และออกแบบให้ใช้ได้ทั้งเจ้าของเครื่องคนเดียวหรือหลายบัญชีลูกค้า
 
@@ -16,14 +16,14 @@ SNTalkBot Full มี 124 canonical commands และ TTUHelper มี 22 comma
 
 1. **SNTalkBot 5.1.0+** — ตัวบอตหลักและ Realtime Status API ภายใน
 2. **TTUHelper 1.5.0+** — จัดการหลาย instance, Docker, update, delete, API port/token และ Linux data layout
-3. **SNTalkBot Web Manager 1.1.5+** — หน้าเว็บจัดการสองโปรเจกต์ด้านบน
+3. **SNTalkBot Web Manager 1.1.7+** — หน้าเว็บจัดการสองโปรเจกต์ด้านบน
 
 ## ความสามารถหลัก
 
 - First-run Setup: ผู้ใช้คนแรกสร้าง **Super Admin** จากหน้าเว็บครั้งแรก หลังจากนั้นหน้า setup ปิด
 - Super Admin สร้าง/ปิดบัญชีหรือรีเซ็ตรหัสผ่านผู้ใช้อื่นได้
 - ผู้ใช้ทั่วไปเห็นและจัดการเฉพาะ instance/Job ที่ตนเป็นเจ้าของ
-- ตอนสร้างบอตใหม่ ตรวจ TeamTalk username ของเจ้าของว่าเป็น Administrator ที่ออนไลน์อยู่จริง และไม่นับบัญชีบอตเองเป็นหลักฐาน
+- ตอนสร้างบอตของลูกค้า ใช้ one-shot TeamTalk login ตรวจ username/password ที่ลูกค้ากรอกว่าล็อกอินได้จริงและ UserType เป็น Administrator; Web username ไม่ต้องตรงกับ TeamTalk username และ password ชุดยืนยันไม่ถูกเก็บ
 - สร้าง Full / Player / Server Manager ด้วยฟอร์ม ไม่ต้องกรอกเลขประเภท
 - ชื่อ instance ใหม่ใช้เฉพาะ `a-z`, `0-9`, `.`, `-`, `_`, ห้าม space/slash/backslash และยาวไม่เกิน 63 ตัว
 - Start / Stop / Restart / Delete รายตัว และ Start All / Stop All สำหรับ Super Admin
@@ -64,13 +64,13 @@ bootstrap จะตรวจเครื่องมือ, ดาวน์โ�
 
 ## Production layout แบบ Docker-only
 
-Web Manager 1.1.5 ไม่ต้องมี SNTalkBot source checkout ที่ `/opt/sntalkbot` บน production host อีกแล้ว ตัวบอตจริงมาจาก Docker image ที่ TTUHelper กำหนด และข้อมูลแต่ละ instance อยู่ที่ `/opt/sntalkbot-bots/` ตาม production architecture ปัจจุบัน การสร้าง instance และ migration จะอ่าน `config_default.ini` จาก Docker image โดยตรง ส่วน `/opt/ttuhelper` และ `/opt/sntalkbot-web-manager` ยังคงเป็น source/tool บน host ตามหน้าที่ของตนเอง
+Web Manager 1.1.7 ไม่ต้องมี SNTalkBot source checkout ที่ `/opt/sntalkbot` บน production host อีกแล้ว ตัวบอตจริงมาจาก Docker image ที่ TTUHelper กำหนด และข้อมูลแต่ละ instance อยู่ที่ `/opt/sntalkbot-bots/` ตาม production architecture ปัจจุบัน การสร้าง instance และ migration จะอ่าน `config_default.ini` จาก Docker image โดยตรง ส่วน `/opt/ttuhelper` และ `/opt/sntalkbot-web-manager` ยังคงเป็น source/tool บน host ตามหน้าที่ของตนเอง
 
 ## การติดตั้งจาก ZIP
 
 ```bash
 sudo mkdir -p /opt/sntalkbot-web-manager
-sudo unzip -o SNTalkBot-Web-Manager-1.1.5.zip -d /opt/sntalkbot-web-manager
+sudo unzip -o SNTalkBot-Web-Manager-1.1.7.zip -d /opt/sntalkbot-web-manager
 cd /opt/sntalkbot-web-manager
 sudo chmod +x install.sh install_remote.sh
 sudo ./install.sh

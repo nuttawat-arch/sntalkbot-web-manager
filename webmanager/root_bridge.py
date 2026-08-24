@@ -62,6 +62,51 @@ def capture(args, cwd=None):
     return p.stdout
 
 
+def capture_input(args, payload: str, cwd=None):
+    p=subprocess.run(
+        [str(x) for x in args], cwd=str(cwd) if cwd else None, text=True,
+        input=payload, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+    )
+    if p.returncode:
+        # The verifier emits a secret-free JSON error on stdout. Never echo
+        # stdin, argv secrets, or arbitrary stderr from the SDK wrapper.
+        if p.stdout:
+            sys.stdout.write(p.stdout)
+        raise SystemExit(p.returncode)
+    return p.stdout
+
+
+def verify_teamtalk_admin_stdin():
+    raw=sys.stdin.buffer.read(16385)
+    if len(raw)>16384:
+        raise SystemExit("verification request is too large")
+    try:
+        req=json.loads(raw.decode("utf-8"))
+    except Exception:
+        raise SystemExit("invalid verification request")
+    # Validate only the public shape here. The password remains only in memory
+    # and is forwarded through stdin to the ephemeral verifier container.
+    host=str(req.get("hostname") or "").strip()
+    username=str(req.get("username") or "").strip()
+    try:
+        tcp=int(req.get("tcp_port") or 10333); udp=int(req.get("udp_port") or 10333)
+    except Exception:
+        raise SystemExit("invalid TeamTalk port")
+    if not host or not username or not (1<=tcp<=65535 and 1<=udp<=65535):
+        raise SystemExit("invalid TeamTalk verification request")
+    payload=json.dumps({
+        "hostname":host,"tcp_port":tcp,"udp_port":udp,
+        "encrypted":bool(req.get("encrypted")),"username":username,
+        "password":str(req.get("password") or ""),"timeout":15,
+    },ensure_ascii=False)
+    out=capture_input([
+        "docker","run","--rm","-i","--entrypoint","python",image_name(),
+        "/app/tools/verify_teamtalk_admin.py"
+    ],payload)
+    sys.stdout.write(out)
+    return 0
+
+
 def image_name():
     helper=helper_settings()
     return f"{helper['TTU_IMAGE_REPO']}:{helper['TTU_TAG']}"
@@ -295,6 +340,9 @@ def main():
             elif args: raise SystemExit("unexpected arguments")
             return run(cmd)
         raise SystemExit("helper action not allowed")
+    if action=="verify-teamtalk-admin":
+        if args: raise SystemExit("verify-teamtalk-admin accepts JSON on stdin only")
+        return verify_teamtalk_admin_stdin()
     if action=="container-name-check":
         if len(args)!=1: raise SystemExit("container-name-check requires one instance name")
         return require_container_name_available(args[0])

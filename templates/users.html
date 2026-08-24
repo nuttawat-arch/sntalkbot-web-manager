@@ -5,11 +5,13 @@
 <form method="post" action="/users/create"><input type="hidden" name="csrf" value="{{ csrf }}">
 <label for="username">ชื่อผู้ใช้</label><input id="username" name="username" required pattern="[A-Za-z0-9][A-Za-z0-9_.-]{2,63}">
 <label for="display_name">ชื่อที่แสดง</label><input id="display_name" name="display_name">
+<label for="teamtalk_admin_username">TeamTalk Administrator username เริ่มต้น/แนะนำของลูกค้า</label><input id="teamtalk_admin_username" name="teamtalk_admin_username" aria-describedby="ttmaphelp"><small id="ttmaphelp">ชื่อเว็บกับ TeamTalk ไม่จำเป็นต้องเหมือนกัน ค่านี้เป็นเพียงค่าเริ่มต้นเพื่อกรอก username ให้สะดวก; ลูกค้ายังต้องยืนยันเองด้วย username/password จริงทุกครั้งที่สร้าง instance และรหัสผ่านไม่ถูกเก็บ</small>
 <label for="password">รหัสผ่านเริ่มต้น</label><input id="password" name="password" type="password" minlength="10" required autocomplete="new-password">
 <button type="submit">สร้างผู้ใช้</button></form>
 <h3>ผู้ใช้ทั้งหมด ({{ users|length }})</h3>
 {% for u in users %}<details class="bot-card"><summary><strong>{{ u.display_name or u.username }}</strong> — {{ u.username }} — {{ u.role }} — {{ 'เปิดใช้' if u.active else 'ปิดใช้' }}</summary>
-<p>สร้างเมื่อ {{ u.created_at }}</p>
+<p>สร้างเมื่อ {{ u.created_at }} | TeamTalk Admin ค่าเริ่มต้น: <strong>{{ u.teamtalk_admin_username or 'ยังไม่ผูก' }}</strong></p>
+<form method="post" action="/users/{{ u.id }}/teamtalk"><input type="hidden" name="csrf" value="{{ csrf }}"><label for="tt{{ u.id }}">TeamTalk Administrator username</label><input id="tt{{ u.id }}" name="teamtalk_admin_username" value="{{ u.teamtalk_admin_username or '' }}"><button type="submit">บันทึกค่าเริ่มต้น TeamTalk username</button></form>
 <form method="post" action="/users/{{ u.id }}/password"><input type="hidden" name="csrf" value="{{ csrf }}"><label for="pw{{ u.id }}">ตั้งรหัสผ่านใหม่</label><input id="pw{{ u.id }}" name="password" type="password" minlength="10" required autocomplete="new-password"><button type="submit">เปลี่ยนรหัสผ่าน</button></form>
 {% if u.id != current_user.id %}<form method="post" action="/users/{{ u.id }}/toggle"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">{{ 'ปิดบัญชี' if u.active else 'เปิดบัญชี' }}</button></form>{% endif %}
 </details>{% endfor %}

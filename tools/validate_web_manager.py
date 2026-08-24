@@ -37,6 +37,7 @@ checks={
  'three roles':all(x in app for x in ('"full"','"player"','"manager"')),
  'all 22 TTUHelper commands documented':all(('`'+x+'`') in mapping for x in expected),
  'delete confirmation on detail + dashboard': 'confirm_name' in app and 'พิมพ์ <strong>{{ bot.name }}</strong>' in insttpl and 'ลบ instance นี้' in dash_tpl and 'confirm_name' in dash_tpl,
+ 'delete is stopped-only in UI and backend':'{% if not bot.container or not bot.container.running %}' in insttpl and '{% if not bot.running %}' in dash_tpl and 'status_code=409' in app and 'ต้องหยุด instance ก่อนจึงจะลบได้' in app,
  'runtime HTTP API preferred with JSON fallback only while running':'bot_api_status(path) or runtime_state(path)' in app and 'if not running:' in app and 'Never surface a recent runtime_status.json snapshot after the container' in app,
  'API uses loopback Bearer token':'http://127.0.0.1:{port}/v1/status' in app and 'Authorization' in app and 'Bearer {token}' in app,
  'multi-user database':'Store(DB_FILE)' in app and 'instance_owners' in storage,
@@ -44,7 +45,8 @@ checks={
  'only superadmin creates accounts':'users_create' in app and 'require_superadmin(request)' in app,
  'tenant ownership enforced':'can_manage_instance' in app and 'owned_names' in app and 'owner_user_id' in app,
  'job ownership enforced':'can_view_job' in app and 'owner_user_id' in app and 'not can_view_job(user, initial)' in app,
- 'owner must be online TeamTalk admin':'verify_owner_admin' in app and 'admins_online' in app and 'username เดียวกับบอต' in app,
+ 'tenant proves TeamTalk Administrator credentials':'verify_teamtalk_admin_credentials' in app and 'verify_teamtalk_password' in app and 'root_run_stdin' in app and 'verify-teamtalk-admin' in bridge and '/app/tools/verify_teamtalk_admin.py' in bridge,
+ 'TeamTalk verification password is stdin-only and non-persistent':'input=json.dumps(payload, ensure_ascii=False)' in app and 'sys.stdin.buffer.read' in bridge and '"docker","run","--rm","-i"' in bridge and 'verify_teamtalk_password' not in storage,
  'Linux lowercase instance rule':'NEW_BOT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,62}$")' in app and 'pattern="[a-z0-9][a-z0-9_.-]{0,62}"' in newtpl,
  'config all sections':'config_for_form' in app and 'save_config_form' in app,
  'secret fields masked':'safe_secret_key' in app and 'clear_secret' in app,
@@ -75,7 +77,7 @@ checks={
  'migration template comes from Docker image':'TemporaryDirectory(prefix="snweb-migrate-")' in bridge and 'template.write_text(image_text("/app/config_default.ini")' in bridge,
  'CloudPanel loopback default':'BIND="${SNWEB_BIND:-127.0.0.1}"' in installer and 'PORT="${SNWEB_PORT:-28765}"' in installer,
  'normal-user nav hides privileged pages':"{% if user.role == 'superadmin' %}" in base and '/users' in base and '/system' in base,
- 'admin list excludes bot explained':'ไม่รวมบัญชีของบอตเอง' in insttpl and 'User ID และ username' in help_tpl,
+ 'admin list excludes bot explained':'ไม่รวมบัญชีของบอตเอง' in insttpl and 'บัญชี TeamTalk ของบอตเอง' in help_tpl,
  'guide matches API range and command counts':'20000–27999' in help_tpl and '20000–29999' not in help_tpl and '124 canonical commands' in help_tpl and '22 commands' in help_tpl,
  'guardian architecture documented':'Web Guardian' in help_tpl and '28765' in help_tpl and '28766' in help_tpl and 'Guardian' in system_tpl,
  'stable 28765 Guardian + private 28766 backend defaults':'28766' in mainmod and "'127.0.0.1'" in mainmod and '127.0.0.1:28765' in nginx and 'PUBLIC_PORT' in guardian and 'BACKEND_PORT' in guardian and "'8765'" not in mainmod and ':8765' not in nginx,
@@ -134,6 +136,32 @@ assert client2.get('/users').status_code==403
 r=client2.get('/instances/mine/config'); assert r.status_code==200 and 'ล็อกสำหรับบัญชีผู้ใช้ทั่วไป' in r.text
 m2=re.search(r'name="csrf" value="([^"]+)"',r.text); assert m2
 customer_csrf=m2.group(1)
+# A tenant whose Web username differs from TeamTalk can self-prove an Admin credential.
+def tenant_root(args, timeout=120, check=False):
+ a=tuple(str(x) for x in args)
+ if a and a[0]=='container-name-check': return 0,''
+ if a and a[0]=='bot-config-template':
+  return 0,'[server]\\naddress=\\ntcp_port=10333\\nudp_port=10333\\nencrypted=False\\nusername=\\npassword=\\n[bot]\\nlanguage=th\\nnickname=SN TalkBot\\ndefault_channel=/\\nchannel_password=\\nstatus_message=auto\\n[accounts]\\nauthorized_users=\\n[features]\\nplayer_enabled=True\\nserver_management_enabled=True\\n[playback]\\ncookiefile_path=/app/data/cookies.txt\\n'
+ if a and a[0]=='docker-inspect': return 1,''
+ return 0,''
+def tenant_root_stdin(args,payload,timeout=45,check=False):
+ assert tuple(args)==('verify-teamtalk-admin',)
+ assert payload['username']=='tenantadmin' and payload['password']=='tenant-proof-secret'
+ return 0,'{"ok":true,"authenticated":true,"administrator":true,"username":"tenantadmin","user_id":88,"user_type":2}\\n'
+mod.root_run=tenant_root; mod.root_run_stdin=tenant_root_stdin
+r=client2.get('/instances/new'); assert r.status_code==200 and 'TeamTalk Administrator password' in r.text
+csrf_new=re.search(r'name="csrf" value="([^"]+)"',r.text).group(1)
+r=client2.post('/instances/new',data={'csrf':csrf_new,'name':'tenantbot','role':'manager','hostname':'server.example','tcp_port':'10333','udp_port':'10333','verify_teamtalk_username':'tenantadmin','verify_teamtalk_password':'tenant-proof-secret','username':'botservice','password':'bot-only-secret','language':'th'},follow_redirects=False); assert r.status_code==303
+jid=r.headers['location'].rsplit('/',1)[-1]
+for _ in range(100):
+ j=mod.jobs.get(jid)
+ if j.get('status') in ('success','failed'): break
+ time.sleep(.02)
+assert mod.jobs.get(jid).get('status')=='success', mod.jobs.get(jid)
+owner=mod.STORE.owner('tenantbot'); assert owner and owner['teamtalk_admin_username']=='tenantadmin'
+assert 'tenant-proof-secret' not in (root/'tenantbot'/'config.ini').read_text()
+assert b'tenant-proof-secret' not in Path(mod.DB_FILE).read_bytes()
+assert all('tenant-proof-secret' not in str(j.get('output') or '') for j in mod.jobs.jobs.values())
 r=client2.post('/instances/mine/config',data={'csrf':customer_csrf,'kind__server__address':'text','cfg__server__address':'unauthorized.example'},follow_redirects=False); assert r.status_code==403
 assert 'address=x' in (root/'mine'/'config.ini').read_text()
 # Super Admin can still perform an intentional connection change.
@@ -180,10 +208,14 @@ def fake_root(args, timeout=120, check=False):
     if a and a[0]=='image-inspect': return 1,''
     if a and a[0]=='remote-image-inspect': return 1,''
     return 0,''
+def fake_root_stdin(args, payload, timeout=45, check=False):
+    calls.append(('root-stdin',tuple(str(x) for x in args),tuple(sorted(payload.keys()))))
+    assert payload.get('password') == 'owner-secret'
+    return 0, '{"ok":true,"authenticated":true,"administrator":true,"username":"owneradmin","user_id":77,"user_type":2}\n'
 def fake_stream(args, timeout=1800):
     calls.append(('stream',tuple(str(x) for x in args))); return 0
-mod.root_run=fake_root; mod.stream_root=fake_stream
-mod.verify_owner_admin=lambda *a,**k: {'connected':True,'admins_online':[{'username':'owneradmin'}]}
+mod.root_run=fake_root; mod.root_run_stdin=fake_root_stdin; mod.stream_root=fake_stream
+assert mod.verify_teamtalk_admin_credentials({'hostname':'teamtalk.example','tcp_port':10333,'udp_port':10333,'encrypted':False},'owneradmin','owner-secret') == 'owneradmin'
 client=TestClient(mod.app)
 r=client.post('/setup',data={'username':'rootadmin','display_name':'Owner','password':'verystrongpass1','password2':'verystrongpass1'},follow_redirects=False); assert r.status_code==303
 r=client.get('/'); assert r.status_code==200
@@ -198,6 +230,7 @@ for _ in range(100):
 assert mod.jobs.get(jid).get('status')=='success', mod.jobs.get(jid)
 assert (mod.bots_root()/'actionbot'/'config.ini').is_file()
 assert any(x[1] and x[1][0]=='container-name-check' for x in calls)
+assert any(x[0]=='root-stdin' and x[1]==('verify-teamtalk-admin',) for x in calls)
 # Logs
 r=client.get('/instances/actionbot/logs'); assert r.status_code==200 and 'hello-log' in r.text
 # Config
@@ -234,7 +267,16 @@ for want in expected:
 # A stopped container must never surface a fresh-looking runtime_status fallback.
 (mod.bots_root()/'actionbot'/'runtime_status.json').write_text('{"updated_epoch":9999999999,"users_online":99,"player":{"title":"stale"}}')
 rows=mod.list_instances(); assert next(x for x in rows if x['name']=='actionbot')['runtime'] is None
-# Dashboard exposes a separate confirmed delete group instead of hiding delete only on the detail page.
+# Running instances must not show Delete and backend must reject a direct bypass.
+orig_docker_container=mod.docker_container
+orig_live_state=mod.live_state
+mod.docker_container=lambda name: {'name':name,'running':True,'status':'running'}
+mod.live_state=lambda *a,**k: None
+r=client.get('/'); assert r.status_code==200 and 'ลบ instance นี้' not in r.text
+r=client.post('/instances/actionbot/action',data={'csrf':csrf,'action':'delete','confirm_name':'actionbot'},follow_redirects=False); assert r.status_code==409
+mod.docker_container=orig_docker_container
+mod.live_state=orig_live_state
+# Once stopped, Dashboard exposes the confirmed delete group.
 r=client.get('/'); assert r.status_code==200 and 'ลบ instance นี้' in r.text and 'confirm_name' in r.text
 # Delete last; ownership must be removed only after the job action is queued/executed.
 r=client.post('/instances/actionbot/action',data={'csrf':csrf,'action':'delete','confirm_name':'actionbot'},follow_redirects=False); assert r.status_code==303

@@ -1,4 +1,14 @@
-# SNTalkBot Web Manager 1.1.5
+# SNTalkBot Web Manager 1.1.7 — Self-service TeamTalk Admin Proof
+
+- ลูกค้าไม่ต้องใช้ Web username เดียวกับ TeamTalk username และไม่ต้องรอ Super Admin ผูก identity เป็น authorization gate
+- หน้าสร้างบอตรับ TeamTalk Administrator username/password แยกจาก bot login; ระบบส่ง credentials ผ่าน stdin ไป privileged bridge และ one-shot verifier ใน SNTalkBot Docker image
+- verifier login ไปยัง TeamTalk server เป้าหมายจริงและต้องได้ `UserType=Administrator` ก่อนสร้าง persistent instance; password ไม่เข้า argv, DB, config หรือ Job log
+- `teamtalk_admin_username` เดิมในบัญชีผู้ใช้ยังเก็บไว้แบบ additive เป็นค่าเริ่มต้นช่วยกรอก เพื่อไม่ทำลาย schema/ข้อมูลเดิม แต่ลูกค้าสามารถยืนยัน username อื่นด้วย password จริงได้
+- Web Super Admin ข้าม owner credential verification และสร้างบน server ใดก็ได้ตามเดิม
+- กลุ่ม Delete แสดงเฉพาะ stopped instance; backend ตอบ 409 ถ้าพยายามลบขณะ container ยัง running พร้อมคง exact-name confirmation และ TTUHelper backup
+- คง Guardian 1.0.0 / 28765 -> backend 28766, realtime room/server detail และ stopped snapshot suppression
+
+# SNTalkBot Web Manager 1.1.6
 
 - เพิ่ม **SNTalkBot Web Guardian 1.0.0** เป็น service กลางที่คง socket `127.0.0.1:28765` ไว้เสมอ; FastAPI Web Manager ย้ายไป backend `127.0.0.1:28766` จึง restart/self-update ได้โดย Reverse Proxy ไม่เจอ raw 502 ในการอัปเดตปกติหลัง Guardian ติดตั้งแล้ว
 - เมื่อ backend กำลัง restart Guardian แสดงหน้า maintenance ที่อ่านด้วยโปรแกรมอ่านหน้าจอได้และลองเชื่อมต่อใหม่อัตโนมัติ; API ได้ HTTP 503 + `Retry-After` แทน raw proxy failure

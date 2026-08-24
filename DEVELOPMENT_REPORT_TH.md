@@ -1,4 +1,30 @@
-# DEVELOPMENT REPORT — SNTalkBot Web Manager 1.1.5
+# Development Report — Web Manager 1.1.7 (Credential Proof / Stopped-only Delete)
+
+## 2026-08-25
+- เปลี่ยน owner verification จาก “มี TeamTalk username นี้อยู่ในรายชื่อ Administrator ที่ออนไลน์” เป็นการพิสูจน์ credentials จริง: tenant กรอก TeamTalk Administrator username/password เอง
+- เพิ่ม `root_run_stdin()` และ privileged action `verify-teamtalk-admin`; password ไม่อยู่ใน command line และ root bridge ส่งต่อ stdin เข้า ephemeral SNTalkBot verifier container
+- verification ทำก่อน `create_instance()` ดังนั้น password ผิด/non-admin/network fail จะไม่ทิ้ง bot directory/container ครึ่งสำเร็จ
+- verified TeamTalk username ถูกบันทึกเป็น owner/authorized user; verification password ไม่ถูก persist
+- ค่า `users.teamtalk_admin_username` เดิมคงไว้เป็น optional prefill เพื่อรักษา backward compatibility ไม่ใช้เป็น gate
+- safe-delete ยืนยันอีกชั้น: UI ซ่อน Delete ขณะ running และ backend ตอบ HTTP 409 หาก bypass UI
+- validator เพิ่ม credential stdin/non-persistence/action regression และ action matrix เดิมยังผ่านครบ
+
+---
+
+# Development Report — Web Manager 1.1.6 (Account Identity / Safe Delete)
+
+## 2026-08-25
+- แยก Web username ออกจาก TeamTalk Administrator identity อย่างเป็นทางการ: Super Admin เป็นผู้ผูก `teamtalk_admin_username` บนบัญชีลูกค้า และลูกค้าแก้ mapping นี้เองไม่ได้
+- ลูกค้าสร้าง instance ได้เมื่อ TeamTalk username ที่ผูกไว้ออนไลน์และเป็น Administrator บน server เป้าหมายจริง; ห้ามใช้ bot username เป็นหลักฐาน
+- Web Super Admin ข้าม owner-verification และสร้าง instance บน TeamTalk server ใดก็ได้ โดยยังต้องมี bot connection credentials ที่ถูกต้องเพื่อให้บอตออนไลน์
+- ปุ่ม/กลุ่ม Delete แสดงเฉพาะ instance ที่หยุดแล้ว และ backend ตอบ 409 หากมีการยิง delete ไปยัง instance ที่กำลังรัน แม้ข้าม UI
+- รักษา exact-name confirmation + TTUHelper backup ก่อนลบ
+- เพิ่ม schema migration แบบ additive สำหรับ `users.teamtalk_admin_username`; ไม่ลบบัญชี/ownership เดิม
+- ตรวจคู่มือ/validator ให้สะท้อน mapping และ safe-delete rules ใหม่
+
+---
+
+# DEVELOPMENT REPORT — SNTalkBot Web Manager 1.1.6
 
 วันที่: 2026-08-25
 
@@ -25,11 +51,11 @@
 - stopped-state regression ยืนยันว่า container หยุดแล้ว runtime fallback ถูกซ่อนทั้ง server render และ SSE
 - Guardian runtime regression ผ่านทั้ง maintenance เมื่อ backend down, proxy POST/form, SSE event streaming แบบไม่ buffer และกลับมา proxy อัตโนมัติเมื่อ backendขึ้น
 - updater regression ผ่าน dirty-source staging/backup/rollback และ rollback คืน running process
-- compatibility audit ของ production 1.1.4 ผ่าน: root bridge 1.1.4 เรียก checkout ใหม่ด้วย `SNWEB_DEFER_RESTART=1`; installer 1.1.5 จึง schedule first Guardian transition หลัง Job ตอบกลับ และ delayed restart เดิมของ 1.1.4 กลายเป็น backend restart เพิ่มโดยไม่หยุด Guardian
+- compatibility audit ของ production 1.1.4 ผ่าน: root bridge 1.1.4 เรียก checkout ใหม่ด้วย `SNWEB_DEFER_RESTART=1`; installer 1.1.6 จึง schedule first Guardian transition หลัง Job ตอบกลับ และ delayed restart เดิมของ 1.1.4 กลายเป็น backend restart เพิ่มโดยไม่หยุด Guardian
 - Bash/Python/LF และคู่มือ/พอร์ต/command-count invariants ผ่าน
 
 ## สถานะ/สิ่งที่ยังเหลือ
-- หลัง PublishFirst ต้องทดสอบ production self-update 1.1.4 → 1.1.5 ผ่านหน้าเว็บหนึ่งครั้ง, ทดสอบ stopped instance, safe delete ด้วย instance ทดสอบ และรัน strict server verifier
+- หลัง PublishFirst ต้องทดสอบ production self-update 1.1.4 → 1.1.6 ผ่านหน้าเว็บหนึ่งครั้ง, ทดสอบ stopped instance, safe delete ด้วย instance ทดสอบ และรัน strict server verifier
 - การย้ายจากระบบเดิมที่ Web Manager ถือ 28765 ไป Guardian เป็น migration ครั้งแรก จึงอาจมีช่องว่างระดับสั้นมากครั้งเดียวตอนสลับผู้ถือ socket; หลัง Guardian ทำงานแล้ว routine self-update จะไม่ทำให้ public socket หาย
 
 ---

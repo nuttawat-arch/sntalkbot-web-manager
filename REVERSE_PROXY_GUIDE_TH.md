@@ -1,4 +1,4 @@
-# คู่มือติดตั้ง SNTalkBot Web Manager 1.1.5: Standalone และ Reverse Proxy
+# คู่มือติดตั้ง SNTalkBot Web Manager 1.1.7: Standalone และ Reverse Proxy
 
 Web Manager ใช้ 2 service: `sntalkbot-web-guardian` คง socket `127.0.0.1:28765` สำหรับ Reverse Proxy และ `sntalkbot-web-manager` รัน FastAPI backend ที่ `127.0.0.1:28766` โดยค่าเริ่มต้น ทั้งคู่ไม่เปิดหน้าจัดการออก Internet โดยตรง
 
@@ -24,7 +24,7 @@ ss -ltn | grep ':28765 ' || true
 
 ```bash
 sudo mkdir -p /opt/sntalkbot-web-manager
-sudo unzip -o SNTalkBot-Web-Manager-1.1.5.zip -d /opt/sntalkbot-web-manager
+sudo unzip -o SNTalkBot-Web-Manager-1.1.7.zip -d /opt/sntalkbot-web-manager
 cd /opt/sntalkbot-web-manager
 sudo chmod +x install.sh install_remote.sh
 sudo ./install.sh
@@ -57,7 +57,7 @@ wget -qO- https://ttdl.nuttawat.ddnsfree.com/install_web_manager.sh | sudo bash
 
 ตัว bootstrap ตรวจเครื่องมือที่ต้องใช้ก่อน, ดาวน์โหลด `SNTalkBot-Web-Manager-latest.zip` พร้อม `.sha256`, ตรวจ SHA-256 และแตกไป staging ก่อนแตะของเดิม จากนั้นสำรอง source เดิมทั้งโฟลเดอร์แล้วจึงติดตั้งรุ่นใหม่ จึงไม่ติดปัญหา local changes หรือ `.git`; ถ้า installer ล้มจะ restore source รุ่นเดิมให้อัตโนมัติ
 
-ตั้งแต่ 1.1.5 เป็นต้นไป Guardian 1.0.0 เป็น service กลางคงที่และติดตั้งเฉพาะครั้งแรก Routine self-update จะไม่เขียนทับหรือ restart Guardian; หน้าเว็บจึงยังตอบ maintenance/health ได้ระหว่าง FastAPI backend restart การอัปเกรด Guardian ในอนาคตต้องทำเป็น migration แยกโดยตั้งใจ
+ตั้งแต่ 1.1.7 เป็นต้นไป Guardian 1.0.0 เป็น service กลางคงที่และติดตั้งเฉพาะครั้งแรก Routine self-update จะไม่เขียนทับหรือ restart Guardian; หน้าเว็บจึงยังตอบ maintenance/health ได้ระหว่าง FastAPI backend restart การอัปเกรด Guardian ในอนาคตต้องทำเป็น migration แยกโดยตั้งใจ
 
 ## 3. ติดตั้งจาก GitHub
 

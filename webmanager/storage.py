@@ -33,7 +33,8 @@ class Store:
                     role TEXT NOT NULL CHECK(role IN ('superadmin','user')),
                     active INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL,
-                    created_by INTEGER REFERENCES users(id)
+                    created_by INTEGER REFERENCES users(id),
+                    teamtalk_admin_username TEXT NOT NULL DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS instance_owners (
                     instance_name TEXT PRIMARY KEY,
@@ -43,6 +44,12 @@ class Store:
                 );
                 """
             )
+            # Schema migration for Web Manager <= 1.1.5. Keep the field as an
+            # optional TeamTalk username prefill. 1.1.7+ proves ownership with a
+            # one-shot username/password login instead of trusting this mapping.
+            cols = {str(row[1]) for row in db.execute("PRAGMA table_info(users)").fetchall()}
+            if "teamtalk_admin_username" not in cols:
+                db.execute("ALTER TABLE users ADD COLUMN teamtalk_admin_username TEXT NOT NULL DEFAULT ''")
 
     @staticmethod
     def _hash(password: str, salt: bytes) -> bytes:
@@ -75,7 +82,7 @@ class Store:
             row = db.execute("SELECT * FROM users WHERE id=?", (int(cur.lastrowid),)).fetchone()
             return dict(row) if row else None
 
-    def create_user(self, username: str, password: str, *, role: str = "user", display_name: str = "", created_by=None):
+    def create_user(self, username: str, password: str, *, role: str = "user", display_name: str = "", teamtalk_admin_username: str = "", created_by=None):
         username = username.strip()
         if role not in ("superadmin", "user"):
             raise ValueError("invalid role")
@@ -86,8 +93,8 @@ class Store:
         now = datetime.now(timezone.utc).isoformat()
         with self.connect() as db:
             cur = db.execute(
-                "INSERT INTO users(username,display_name,salt,password_hash,role,active,created_at,created_by) VALUES(?,?,?,?,?,1,?,?)",
-                (username, display_name.strip(), salt.hex(), digest.hex(), role, now, created_by),
+                "INSERT INTO users(username,display_name,salt,password_hash,role,active,created_at,created_by,teamtalk_admin_username) VALUES(?,?,?,?,?,1,?,?,?)",
+                (username, display_name.strip(), salt.hex(), digest.hex(), role, now, created_by, teamtalk_admin_username.strip()),
             )
             # Read the row through the same transaction. Opening a second SQLite
             # connection here can race the commit and return None on first-run setup.
@@ -117,7 +124,7 @@ class Store:
 
     def list_users(self):
         with self.connect() as db:
-            rows = db.execute("SELECT id,username,display_name,role,active,created_at FROM users ORDER BY username COLLATE NOCASE").fetchall()
+            rows = db.execute("SELECT id,username,display_name,role,active,created_at,teamtalk_admin_username FROM users ORDER BY username COLLATE NOCASE").fetchall()
             return [dict(x) for x in rows]
 
     def set_password(self, user_id: int, password: str):
@@ -127,6 +134,11 @@ class Store:
         digest = self._hash(password, salt)
         with self.connect() as db:
             db.execute("UPDATE users SET salt=?, password_hash=? WHERE id=?", (salt.hex(), digest.hex(), int(user_id)))
+
+
+    def set_teamtalk_admin_username(self, user_id: int, username: str):
+        with self.connect() as db:
+            db.execute("UPDATE users SET teamtalk_admin_username=? WHERE id=?", (username.strip(), int(user_id)))
 
     def set_active(self, user_id: int, active: bool):
         with self.connect() as db:

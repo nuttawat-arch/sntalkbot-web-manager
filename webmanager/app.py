@@ -150,6 +150,27 @@ def root_run(args, *, timeout=120, check=False):
     return run(cmd, timeout=timeout, check=check)
 
 
+def root_run_stdin(args, payload: dict, *, timeout=45, check=False):
+    """Call the privileged bridge with secret-bearing JSON on stdin only.
+
+    This is used for one-shot TeamTalk credential verification. Passwords never
+    enter argv, persisted job metadata/output, config.ini, or the user database.
+    """
+    cmd = ["sudo", "-n", str(ROOT_BRIDGE), *[str(x) for x in args]]
+    proc = subprocess.run(
+        cmd, input=json.dumps(payload, ensure_ascii=False), text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, check=False,
+    )
+    if check and proc.returncode != 0:
+        try:
+            data=json.loads((proc.stdout or "").strip().splitlines()[-1])
+            message=str(data.get("error") or "TeamTalk verification failed")
+        except Exception:
+            message="TeamTalk verification failed"
+        raise RuntimeError(message)
+    return proc.returncode, proc.stdout
+
+
 def read_instance_meta(path: Path):
     data = {}
     p = path / "instance.conf"
@@ -894,12 +915,25 @@ def users_page(request: Request):
 
 
 @app.post("/users/create", response_class=HTMLResponse)
-async def users_create(request: Request, csrf: str = Form(...), username: str = Form(...), display_name: str = Form(""), password: str = Form(...)):
+async def users_create(request: Request, csrf: str = Form(...), username: str = Form(...), display_name: str = Form(""), teamtalk_admin_username: str = Form(""), password: str = Form(...)):
     admin=require_superadmin(request); check_csrf(request,csrf); username=username.strip()
     if not WEB_USERNAME_RE.fullmatch(username):
         raise HTTPException(status_code=400,detail="ชื่อผู้ใช้ต้องยาว 3-64 ตัว และใช้ A-Z a-z 0-9 _ . -")
-    try: STORE.create_user(username,password,role="user",display_name=display_name,created_by=int(admin["id"]))
+    try: STORE.create_user(username,password,role="user",display_name=display_name,teamtalk_admin_username=teamtalk_admin_username,created_by=int(admin["id"]))
     except Exception as exc: raise HTTPException(status_code=400,detail=str(exc))
+    return RedirectResponse("/users",status_code=303)
+
+
+@app.post("/users/{user_id}/teamtalk")
+async def users_teamtalk(request: Request, user_id: int, csrf: str = Form(...), teamtalk_admin_username: str = Form("")):
+    admin=require_superadmin(request); check_csrf(request,csrf)
+    target=STORE.get_user(user_id)
+    if not target: raise HTTPException(status_code=404)
+    if target.get("role") == "superadmin" and int(target["id"]) == int(admin["id"]):
+        # Super Admin never needs a TeamTalk mapping to create instances. Keeping
+        # this editable is harmless, but it is not used as an authorization gate.
+        pass
+    STORE.set_teamtalk_admin_username(user_id, teamtalk_admin_username)
     return RedirectResponse("/users",status_code=303)
 
 
@@ -992,47 +1026,64 @@ async def job_stream(request: Request, jid: str):
     return StreamingResponse(generate(),media_type="text/event-stream",headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
 
 
-def verify_owner_admin(name: str, owner_teamtalk_username: str, bot_username: str, keep_running: bool):
-    path=bots_root()/name
-    target=owner_teamtalk_username.strip().casefold()
-    if not target:
-        raise RuntimeError("ต้องระบุ TeamTalk username ของเจ้าของเพื่อยืนยันสิทธิ์ Administrator")
-    if bot_username.strip() and target == bot_username.strip().casefold():
-        raise RuntimeError("TeamTalk username ที่ใช้ยืนยันเจ้าของต้องไม่ใช่ username ของบอตเอง")
-    job_emit("เริ่มบอตชั่วคราวเพื่อยืนยันว่าเจ้าของออนไลน์และเป็น TeamTalk Administrator")
-    job_helper_action("run",name)
-    deadline=time.time()+45
-    connected_seen=False
-    while time.time()<deadline:
-        state=bot_api_status(path) or runtime_state(path)
-        if state and state.get("connected"):
-            connected_seen=True
-            admins=state.get("admins_online") or []
-            for admin in admins:
-                if str(admin.get("username") or "").strip().casefold()==target:
-                    job_emit(f"[OK] ยืนยัน Administrator: {admin.get('username')} / {admin.get('nickname') or '-'}")
-                    if not keep_running:
-                        job_emit("ผู้ใช้เลือกยังไม่รันบอตหลังสร้าง; หยุด container หลังยืนยันสิทธิ์")
-                        job_helper_action("stop",name)
-                    return state
-        time.sleep(1)
-    if connected_seen:
-        raise RuntimeError("ไม่พบ TeamTalk username ของเจ้าของในรายชื่อ Administrator ที่ออนไลน์อยู่ กรุณาออนไลน์ด้วยบัญชีแอดมินของคุณแล้วสร้างใหม่")
-    raise RuntimeError("บอตยังเชื่อมต่อ TeamTalk ไม่สำเร็จภายในเวลาตรวจสอบ กรุณาตรวจ host/port/username/password")
+def verify_teamtalk_admin_credentials(values: dict, username: str, password: str):
+    """Prove a tenant controls an Administrator account on the target server.
+
+    The credential is used for one short TeamTalk login in an ephemeral Docker
+    container.  The password is never stored and never appears in argv/job logs.
+    """
+    username=str(username or "").strip()
+    if not username:
+        raise RuntimeError("ต้องระบุ TeamTalk Administrator username สำหรับยืนยันสิทธิ์")
+    if password is None or password == "":
+        raise RuntimeError("ต้องระบุรหัสผ่าน TeamTalk Administrator สำหรับยืนยันสิทธิ์")
+    job_emit(f"กำลังยืนยัน TeamTalk Administrator {username} บนเซิร์ฟเวอร์เป้าหมายด้วยการ login ชั่วคราว")
+    payload={
+        "hostname":str(values.get("hostname") or ""),
+        "tcp_port":int(values.get("tcp_port") or 10333),
+        "udp_port":int(values.get("udp_port") or 10333),
+        "encrypted":bool(values.get("encrypted")),
+        "username":username,
+        "password":password,
+    }
+    rc,out=root_run_stdin(["verify-teamtalk-admin"],payload,timeout=40,check=False)
+    try:
+        data=json.loads((out or "").strip().splitlines()[-1])
+    except Exception:
+        data={}
+    if rc or not data.get("ok") or not data.get("administrator"):
+        raise RuntimeError(str(data.get("error") or "ยืนยัน TeamTalk Administrator ไม่สำเร็จ กรุณาตรวจ server/port/username/password"))
+    verified=str(data.get("username") or username).strip()
+    job_emit(f"[OK] login สำเร็จและยืนยันว่า {verified} เป็น TeamTalk Administrator จริง")
+    return verified
 
 
-def job_create_verified(values: dict, owner_user_id: int, owner_teamtalk_username: str, start_now: bool):
+def job_create_verified(values: dict, owner_user_id: int, verification_username: str, verification_password: str, start_now: bool, require_owner_verification: bool = True):
     name=str(values["name"]).strip()
     path=None
+    verified_username=str(verification_username or "").strip()
     try:
+        # Verify before creating persistent bot files. A failed credential proof
+        # therefore leaves no half-created instance behind.
+        if require_owner_verification:
+            verified_username=verify_teamtalk_admin_credentials(values,verification_username,verification_password)
+        else:
+            job_emit("[OK] Super Admin ของเว็บ: ข้าม TeamTalk owner credential verification")
+        auth=[x.strip() for x in str(values.get("authorized_users") or "").split(',') if x.strip()]
+        if verified_username and verified_username.casefold() not in {x.casefold() for x in auth}:
+            auth.append(verified_username)
+        values=dict(values)
+        values["authorized_users"]=",".join(auth)
         job_emit(f"สร้าง instance {name}")
         path=create_instance(values)
-        STORE.set_owner(name,owner_user_id,owner_teamtalk_username)
-        verify_owner_admin(name,owner_teamtalk_username,str(values.get("username") or ""),start_now)
-        job_emit("สร้างและยืนยันเจ้าของ instance สำเร็จ")
+        STORE.set_owner(name,owner_user_id,verified_username)
+        if start_now:
+            job_emit("เริ่มบอตตามคำขอ")
+            job_helper_action("run",name)
+        job_emit("สร้าง instance สำเร็จ" if not require_owner_verification else "สร้างและยืนยันเจ้าของ instance สำเร็จ")
     except Exception:
         if path is not None and path.exists():
-            job_emit("การตรวจสิทธิ์ไม่ผ่าน: กำลังล้าง instance ที่สร้างค้างไว้")
+            job_emit("การสร้างไม่สำเร็จ: กำลังล้าง instance ที่สร้างค้างไว้")
             try: job_helper_action("delete",name)
             except Exception as cleanup: job_emit(f"WARNING cleanup failed: {cleanup}")
             STORE.delete_owner(name)
@@ -1042,7 +1093,7 @@ def job_create_verified(values: dict, owner_user_id: int, owner_teamtalk_usernam
 @app.get("/instances/new", response_class=HTMLResponse)
 def new_instance_page(request: Request):
     user=require_login(request)
-    return templates.TemplateResponse("new_instance.html", {"request": request, "user":user, "csrf": csrf_token(request), "version": VERSION})
+    return templates.TemplateResponse("new_instance.html", {"request": request, "user":user, "csrf": csrf_token(request), "version": VERSION, "mapped_teamtalk_username": str(user.get("teamtalk_admin_username") or "")})
 
 
 @app.post("/instances/new")
@@ -1050,7 +1101,9 @@ async def new_instance(
     request: Request, csrf: str = Form(...), name: str = Form(...), role: str = Form(...), nickname: str = Form("SN TalkBot"),
     hostname: str = Form(...), tcp_port: int = Form(10333), udp_port: int = Form(10333), encrypted: str | None = Form(None),
     username: str = Form(""), password: str = Form(""), channel: str = Form("/"), channel_password: str = Form(""),
-    authorized_users: str = Form(""), owner_teamtalk_username: str = Form(...), language: str = Form("th"), status_message: str = Form("auto"), start_now: str | None = Form(None),
+    authorized_users: str = Form(""), owner_teamtalk_username: str = Form(""),
+    verify_teamtalk_username: str = Form(""), verify_teamtalk_password: str = Form(""),
+    language: str = Form("th"), status_message: str = Form("auto"), start_now: str | None = Form(None),
 ):
     user=require_login(request); check_csrf(request, csrf)
     name=name.strip()
@@ -1058,18 +1111,27 @@ async def new_instance(
         raise HTTPException(status_code=400, detail="ชื่อ instance ใหม่ต้องใช้ตัวพิมพ์เล็ก a-z, 0-9, _, . หรือ - เท่านั้น ยาวไม่เกิน 63 ตัว ห้ามเว้นวรรค/สแลช และต้องขึ้นต้นด้วยตัวอักษรหรือตัวเลข")
     if not hostname.strip(): raise HTTPException(status_code=400, detail="TeamTalk hostname/IP is required")
     if not (1 <= tcp_port <= 65535 and 1 <= udp_port <= 65535): raise HTTPException(status_code=400, detail="Port must be 1-65535")
-    owner_tt=owner_teamtalk_username.strip()
-    if not owner_tt: raise HTTPException(status_code=400,detail="ต้องระบุ TeamTalk username ของคุณสำหรับยืนยันสิทธิ์ Administrator")
-    if username.strip() and owner_tt.casefold()==username.strip().casefold():
-        raise HTTPException(status_code=400,detail="บัญชีที่ใช้ยืนยันเจ้าของห้ามเป็น TeamTalk username เดียวกับบอต เพราะระบบต้องไม่นับบอตเองเป็น Administrator ของเจ้าของ")
+    is_superadmin = user.get("role") == "superadmin"
+    # Web identity and TeamTalk identity are intentionally independent. Tenants
+    # prove control themselves with a one-shot Administrator login; Super Admin
+    # may create on any target server without this tenant authorization gate.
+    owner_tt = owner_teamtalk_username.strip() if is_superadmin else verify_teamtalk_username.strip()
+    if not is_superadmin and not owner_tt:
+        raise HTTPException(status_code=400,detail="กรุณาระบุ TeamTalk Administrator username สำหรับยืนยันสิทธิ์")
+    if not is_superadmin and not verify_teamtalk_password:
+        raise HTTPException(status_code=400,detail="กรุณาระบุรหัสผ่าน TeamTalk Administrator สำหรับยืนยันสิทธิ์")
     auth=[x.strip() for x in authorized_users.split(',') if x.strip()]
-    if owner_tt.casefold() not in {x.casefold() for x in auth}: auth.append(owner_tt)
     values={
         "name":name,"role":role,"nickname":nickname,"hostname":hostname,"tcp_port":tcp_port,"udp_port":udp_port,
         "encrypted":bool(encrypted),"username":username,"password":password,"channel":channel,"channel_password":channel_password,
         "authorized_users":",".join(auth),"language":language,"status_message":status_message,
     }
-    jid=jobs.create(f"สร้างและยืนยัน {name}",job_create_verified,values,int(user["id"]),owner_tt,bool(start_now),owner_user_id=int(user["id"]))
+    jid=jobs.create(
+        f"สร้าง {name}" if is_superadmin else f"สร้างและยืนยัน {name}",
+        job_create_verified,values,int(user["id"]),owner_tt,
+        "" if is_superadmin else verify_teamtalk_password,bool(start_now),not is_superadmin,
+        owner_user_id=int(user["id"]),
+    )
     return RedirectResponse(f"/jobs/{jid}",status_code=303)
 
 
@@ -1094,8 +1156,12 @@ async def instance_action(request: Request, name: str, action: str = Form(...), 
     user=require_login(request); check_csrf(request, csrf); instance_or_404(name,user)
     if action not in ("run", "stop", "restart", "delete"):
         raise HTTPException(status_code=400, detail="Unknown instance action")
-    if action == "delete" and confirm_name != name:
-        raise HTTPException(status_code=400,detail="การลบต้องพิมพ์ชื่อ instance ให้ตรงทุกตัวอักษร")
+    if action == "delete":
+        cont=docker_container(name)
+        if cont and cont.get("running"):
+            raise HTTPException(status_code=409,detail="ต้องหยุด instance ก่อนจึงจะลบได้")
+        if confirm_name != name:
+            raise HTTPException(status_code=400,detail="การลบต้องพิมพ์ชื่อ instance ให้ตรงทุกตัวอักษร")
     def work():
         job_helper_action(action,name)
         if action=="delete": STORE.delete_owner(name)
