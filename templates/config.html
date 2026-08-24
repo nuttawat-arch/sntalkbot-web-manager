@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block title %}ตั้งค่า {{ name }}{% endblock %}{% block content %}
 <h2>การตั้งค่าทั้งหมด: {{ name }}</h2>
-{% if saved %}<p class="success" role="status">บันทึก config.ini แล้ว หากค่ามีผลตอนเริ่มโปรแกรมให้รีสตาร์ตบอต</p><form method="post" action="/instances/{{ name }}/action"><input type="hidden" name="csrf" value="{{ csrf }}"><button name="action" value="restart">รีสตาร์ตตอนนี้</button></form>{% endif %}
+{% if saved %}<p class="success" role="status">บันทึก config.ini แล้ว หากค่ามีผลตอนเริ่มโปรแกรมให้รีสตาร์ตบอต</p><form method="post" action="/instances/{{ name }}/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><button name="action" value="restart">รีสตาร์ตตอนนี้</button></form>{% endif %}
 <p>ทุก section/key ที่มีใน <code>config.ini</code> จะแสดงที่นี่ ค่า Boolean ใช้ checkbox ส่วน password/token/API key ไม่แสดงค่าปัจจุบันและปล่อยช่องว่างเพื่อคงค่าเดิม</p>
 {% if user.role != 'superadmin' %}<p class="minor">เพื่อป้องกันการย้ายบอตไปยัง TeamTalk Server ที่เจ้าของไม่ได้รับอนุญาต ค่า host/ports/encryption และบัญชี TeamTalk ของบอตจะอ่านได้แต่แก้ไม่ได้หลังยืนยันเจ้าของแล้ว หากจำเป็นต้องเปลี่ยนให้ Super Admin เป็นผู้ดำเนินการ</p>{% endif %}
 <form method="post" action="/instances/{{ name }}/config"><input type="hidden" name="csrf" value="{{ csrf }}">

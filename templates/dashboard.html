@@ -9,6 +9,7 @@
 {% for bot in instances %}
 <details class="bot-card" {% if loop.first %}open{% endif %}>
 <summary><strong>{{ bot.name }}</strong> — {{ 'กำลังรัน' if bot.running else 'หยุดอยู่' }} — {{ bot.role }}</summary>
+{% if bot.warnings %}<p class="warning" role="status">ข้อมูลบางส่วนของ instance นี้อ่านไม่สมบูรณ์ แต่ Dashboard ส่วนอื่นยังทำงานได้: {{ bot.warnings|join('; ') }}</p>{% endif %}
 {% if user.role == 'superadmin' and bot.owner %}<p>เจ้าของเว็บ: {{ bot.owner.display_name or bot.owner.username }} ({{ bot.owner.username }}){% endif %}</p>
 <p>ชื่อเล่น: {{ bot.nickname }} | Server: {{ bot.server }} | ห้องตั้งต้น: {{ bot.channel }}</p>
 {% if bot.runtime and not bot.runtime.stale %}
@@ -17,8 +18,8 @@
 {% if bot.runtime.player %}<p>Player: {{ 'กำลังเล่น' if bot.runtime.player.is_playing else 'ว่าง' }} — {{ bot.runtime.player.title or '-' }} | คิว {{ bot.runtime.player.queue_count }} | Q {{ 'ON' if bot.runtime.player.queue_mode else 'OFF' }} | M{{ bot.runtime.player.play_mode }} | Autoplay {{ 'ON' if bot.runtime.player.autoplay else 'OFF' }}</p>{% endif %}
 {% elif bot.running %}<p class="muted">ยังไม่มีข้อมูลสดจาก API/Runtime Bridge เว็บจะแสดงข้อมูล Docker/config แทน</p>{% endif %}
 <p><a href="/instances/{{ bot.name }}">เปิดรายละเอียดและการจัดการ</a> | <a href="/instances/{{ bot.name }}/logs">ดูบันทึก</a> | <a href="/instances/{{ bot.name }}/config">การตั้งค่าทั้งหมด</a></p>
-<form class="inline" method="post" action="/instances/{{ bot.name }}/action"><input type="hidden" name="csrf" value="{{ csrf }}">{% if bot.running %}<button name="action" value="restart">รีสตาร์ต</button><button name="action" value="stop">หยุด</button>{% else %}<button name="action" value="run">เริ่ม</button>{% endif %}</form>
-{% if not bot.running %}<details class="danger-zone"><summary>ลบ instance นี้</summary><p class="warning">ยังไม่ลบทันที ต้องพิมพ์ชื่อ <strong>{{ bot.name }}</strong> ให้ตรงทุกตัวอักษร ระบบจะสำรองข้อมูลก่อนลบ</p><form method="post" action="/instances/{{ bot.name }}/action"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="delete"><label for="dashboard-delete-{{ loop.index }}">พิมพ์ชื่อเพื่อยืนยัน</label><input id="dashboard-delete-{{ loop.index }}" name="confirm_name" autocomplete="off" required><button type="submit">ยืนยันลบ {{ bot.name }}</button></form></details>{% endif %}
+<form class="inline" method="post" action="/instances/{{ bot.name }}/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}">{% if bot.running %}<button name="action" value="restart">รีสตาร์ต</button><button name="action" value="stop">หยุด</button>{% else %}<button name="action" value="run">เริ่ม</button>{% endif %}</form>
+{% if not bot.running %}<details class="danger-zone"><summary>ลบ instance นี้</summary><p class="warning">ยังไม่ลบทันที ต้องพิมพ์ชื่อ <strong>{{ bot.name }}</strong> ให้ตรงทุกตัวอักษร ระบบจะสำรองข้อมูลก่อนลบ</p><form method="post" action="/instances/{{ bot.name }}/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="delete"><label for="dashboard-delete-{{ loop.index }}">พิมพ์ชื่อเพื่อยืนยัน</label><input id="dashboard-delete-{{ loop.index }}" name="confirm_name" autocomplete="off" required><button type="submit">ยืนยันลบ {{ bot.name }}</button></form></details>{% endif %}
 </details>
 {% endfor %}
 {% endblock %}

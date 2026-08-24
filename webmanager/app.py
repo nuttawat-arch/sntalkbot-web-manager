@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -15,12 +16,13 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.parse
 import urllib.request
 import uuid
 import zipfile
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -65,6 +67,7 @@ LOGIN_WINDOW = 300
 LOGIN_MAX_FAILURES = 8
 PROCESS_STARTED_EPOCH = time.time()
 PROCESS_GENERATION = uuid.uuid4().hex
+LOGGER = logging.getLogger("sntalkbot.webmanager")
 
 def _session_secret():
     env = os.getenv("SNWEB_SESSION_SECRET", "").strip()
@@ -89,6 +92,7 @@ app = FastAPI(title="SNTalkBot Web Manager", docs_url=None, redoc_url=None)
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax", https_only=os.getenv("SNWEB_COOKIE_SECURE", "false").strip().lower() in ("1","true","yes","on"), max_age=10 * 365 * 24 * 3600)
 app.mount("/static", StaticFiles(directory=APP_ROOT / "static"), name="static")
 templates = Jinja2Templates(directory=APP_ROOT / "templates")
+templates.env.globals["process_generation"] = PROCESS_GENERATION
 
 def current_user(request: Request):
     user_id = request.session.get("user_id")
@@ -182,21 +186,78 @@ def read_instance_meta(path: Path):
     return data
 
 
-def normalize_live_payload(data):
-    """Normalize old/new SNTalkBot realtime schemas without mislabeling totals.
+def _safe_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
-    SNTalkBot 5.1.2 makes users_online room-scoped and adds explicit room/server
-    fields. Older snapshots used users_online for the whole server, so leave
-    room_users_online unknown instead of presenting a server total as room data.
+
+def _safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _activity_payload(value):
+    row = value if isinstance(value, dict) else {}
+    return {key: _safe_int(row.get(key), 0) for key in ("speaking", "media", "video", "desktop")}
+
+
+def normalize_live_payload(data):
+    """Normalize old/new/partial realtime payloads before templates see them.
+
+    A single malformed or mid-update runtime field must never take down the whole
+    dashboard.  Older SNTalkBot snapshots used users_online as a server total;
+    new snapshots use a room-scoped count and explicit server totals.
     """
     if not isinstance(data, dict):
-        return data
-    if "room_users_online" not in data:
+        return None
+    data = dict(data)
+    legacy = "room_users_online" not in data
+
+    channel = data.get("channel") if isinstance(data.get("channel"), dict) else {}
+    data["channel"] = {"id": _safe_int(channel.get("id"), 0), "name": str(channel.get("name") or "")}
+    data["teamtalk_activity"] = _activity_payload(data.get("teamtalk_activity"))
+    data["server_teamtalk_activity"] = _activity_payload(
+        data.get("server_teamtalk_activity") if not legacy else data.get("teamtalk_activity")
+    )
+
+    if legacy:
         data["server_users_online"] = data.get("server_users_online", data.get("users_online"))
         data["room_users_online"] = None
-        data.setdefault("room_users", [])
-        data.setdefault("admins_in_room_count", None)
-        data.setdefault("server_teamtalk_activity", data.get("teamtalk_activity") or {})
+        data["admins_in_room_count"] = None
+    else:
+        data["room_users_online"] = _safe_int(data.get("room_users_online"), 0)
+        data["admins_in_room_count"] = _safe_int(data.get("admins_in_room_count"), 0)
+    if data.get("server_users_online") is not None:
+        data["server_users_online"] = _safe_int(data.get("server_users_online"), 0)
+    data["admins_online_count"] = _safe_int(data.get("admins_online_count"), 0)
+    data["uptime_seconds"] = _safe_int(data.get("uptime_seconds"), 0)
+
+    room_users=[]
+    for raw in data.get("room_users") if isinstance(data.get("room_users"), list) else []:
+        if not isinstance(raw, dict):
+            continue
+        row=dict(raw)
+        row["state"]={key: bool((raw.get("state") or {}).get(key)) for key in ("speaking","media","video","desktop")} if isinstance(raw.get("state"), dict) else {key:False for key in ("speaking","media","video","desktop")}
+        room_users.append(row)
+    data["room_users"] = room_users
+    data["admins_online"] = [dict(x) for x in data.get("admins_online", []) if isinstance(x, dict)] if isinstance(data.get("admins_online"), list) else []
+
+    player=data.get("player")
+    if isinstance(player, dict):
+        player=dict(player)
+        player["queue_count"]=_safe_int(player.get("queue_count"), 0)
+        player["play_mode"]=_safe_int(player.get("play_mode"), 0)
+        player["volume"]=_safe_int(player.get("volume"), 0)
+        player["speed"]=_safe_float(player.get("speed"), 1.0)
+        player["queue"]=[dict(x) for x in player.get("queue", []) if isinstance(x, dict)] if isinstance(player.get("queue"), list) else []
+        data["player"]=player
+    else:
+        data["player"]=None
+    data["manager"] = dict(data["manager"]) if isinstance(data.get("manager"), dict) else None
     return data
 
 
@@ -345,6 +406,7 @@ def runtime_state(path: Path):
 
 
 def list_instances(user=None):
+    """Return every visible instance without letting one bad instance break / ."""
     root = bots_root()
     result = []
     if not root.is_dir():
@@ -357,21 +419,49 @@ def list_instances(user=None):
             continue
         if allowed is not None and path.name not in allowed:
             continue
-        cfg = read_config(path / "config.ini")
-        cont = docker_container(path.name)
-        live = live_state(path, running=bool(cont and cont["running"]))
-        owner = STORE.owner(path.name)
+        warnings=[]
+        cfg=configparser.ConfigParser(interpolation=None)
+        try:
+            cfg = read_config(path / "config.ini")
+        except Exception as exc:
+            LOGGER.exception("instance config read failed: %s", path.name)
+            warnings.append(f"อ่าน config ไม่สำเร็จ ({type(exc).__name__})")
+        try:
+            cont = docker_container(path.name)
+        except Exception as exc:
+            LOGGER.exception("container status read failed: %s", path.name)
+            cont=None
+            warnings.append(f"อ่านสถานะ container ไม่สำเร็จ ({type(exc).__name__})")
+        try:
+            live = live_state(path, running=bool(cont and cont.get("running")))
+        except Exception as exc:
+            LOGGER.exception("realtime status read failed: %s", path.name)
+            live=None
+            warnings.append(f"อ่านข้อมูลสดไม่สำเร็จ ({type(exc).__name__})")
+        try:
+            role=read_instance_role(path, cfg)
+        except Exception as exc:
+            LOGGER.exception("instance role read failed: %s", path.name)
+            role="unknown"
+            warnings.append(f"อ่านประเภทบอตไม่สำเร็จ ({type(exc).__name__})")
+        try:
+            owner=STORE.owner(path.name)
+        except Exception as exc:
+            LOGGER.exception("instance owner read failed: %s", path.name)
+            owner=None
+            warnings.append(f"อ่านเจ้าของไม่สำเร็จ ({type(exc).__name__})")
         result.append({
             "name": path.name,
             "path": str(path),
-            "role": read_instance_role(path, cfg),
+            "role": role,
             "nickname": cfg.get("bot", "nickname", fallback=path.name),
             "server": cfg.get("server", "address", fallback=""),
             "channel": cfg.get("bot", "default_channel", fallback="/"),
             "container": cont,
-            "running": bool(cont and cont["running"]),
+            "running": bool(cont and cont.get("running")),
             "runtime": live,
             "owner": owner,
+            "warnings": warnings,
         })
     return result
 
@@ -550,6 +640,21 @@ def can_view_job(user, job):
         return True
     owner = job.get("owner_user_id")
     return owner is not None and int(owner) == int(user["id"])
+
+
+def _safe_return_to(value: str | None, fallback="/"):
+    value=(value or "").strip()
+    if not value.startswith("/") or value.startswith("//") or "\r" in value or "\n" in value:
+        return fallback
+    return value[:2048]
+
+
+def job_created_response(request: Request, jid: str, fallback="/"):
+    return_to=_safe_return_to(request.headers.get("X-SNTalkBot-Return-To"), fallback)
+    if request.headers.get("X-SNTalkBot-Job-Dialog") == "1":
+        job=jobs.get(jid)
+        return JSONResponse({"ok":True,"job_id":jid,"job_url":f"/jobs/{jid}","stream_url":f"/jobs/{jid}/stream","return_to":return_to,"kind":job.get("kind"),"process_generation":PROCESS_GENERATION}, status_code=202)
+    return RedirectResponse(f"/jobs/{jid}?return_to={urllib.parse.quote(return_to, safe='')}", status_code=303)
 
 
 def job_install_stack():
@@ -828,6 +933,17 @@ async def http_exc(request: Request, exc: HTTPException):
     return PlainTextResponse(str(exc.detail), status_code=exc.status_code)
 
 
+@app.exception_handler(Exception)
+async def unhandled_exc(request: Request, exc: Exception):
+    request_id=uuid.uuid4().hex[:12]
+    LOGGER.exception("Unhandled Web Manager error request_id=%s path=%s", request_id, request.url.path)
+    return templates.TemplateResponse(
+        "error.html",
+        {"request":request,"user":None,"csrf":"","version":VERSION,"request_id":request_id},
+        status_code=500,
+    )
+
+
 def login_key(request: Request, username: str):
     host = request.client.host if request.client else "unknown"
     return f"{host}|{username}"
@@ -992,16 +1108,25 @@ async def system_action(request: Request, action: str = Form(...), csrf: str = F
         raise HTTPException(status_code=400, detail="Unknown action")
     title, func, args = mapping[action]
     jid = jobs.create(title, func, *args, owner_user_id=int(user["id"]), kind=action)
-    return RedirectResponse(f"/jobs/{jid}", status_code=303)
+    return job_created_response(request, jid, "/system")
 
 
 @app.get("/jobs/{jid}", response_class=HTMLResponse)
-def job_page(request: Request, jid: str):
+def job_page(request: Request, jid: str, return_to: str = "/"):
     user=require_login(request)
     job = jobs.get(jid)
     if not job or not can_view_job(user, job):
         raise HTTPException(status_code=404)
-    return templates.TemplateResponse("job.html", {"request": request, "user":user, "job": job, "csrf": csrf_token(request), "version": VERSION, "process_generation": PROCESS_GENERATION})
+    return templates.TemplateResponse("job.html", {"request": request, "user":user, "job": job, "csrf": csrf_token(request), "version": VERSION, "process_generation": PROCESS_GENERATION, "return_to": _safe_return_to(return_to)})
+
+
+@app.get("/jobs/{jid}/status")
+def job_status(request: Request, jid: str):
+    user=require_login(request)
+    job=jobs.get(jid)
+    if not job or not can_view_job(user, job):
+        raise HTTPException(status_code=404)
+    return JSONResponse({"id":job.get("id"),"title":job.get("title"),"status":job.get("status"),"output":job.get("output", ""),"kind":job.get("kind")})
 
 
 @app.get("/jobs/{jid}/stream")
@@ -1132,7 +1257,7 @@ async def new_instance(
         "" if is_superadmin else verify_teamtalk_password,bool(start_now),not is_superadmin,
         owner_user_id=int(user["id"]),
     )
-    return RedirectResponse(f"/jobs/{jid}",status_code=303)
+    return job_created_response(request, jid, "/instances/new")
 
 
 @app.get("/instances/{name}", response_class=HTMLResponse)
@@ -1166,7 +1291,7 @@ async def instance_action(request: Request, name: str, action: str = Form(...), 
         job_helper_action(action,name)
         if action=="delete": STORE.delete_owner(name)
     jid = jobs.create(f"{action} {name}", work, owner_user_id=int(user["id"]))
-    return RedirectResponse(f"/jobs/{jid}", status_code=303)
+    return job_created_response(request, jid, f"/instances/{name}")
 
 
 @app.get("/instances/{name}/live")
@@ -1262,7 +1387,7 @@ async def instance_cookies(request: Request, name: str, csrf: str = Form(...), c
 async def instance_cookies_check(request: Request, name: str, csrf: str = Form(...)):
     user=require_login(request); check_csrf(request, csrf); instance_or_404(name,user)
     jid = jobs.create(f"ตรวจ cookies {name}", job_cookie_check, name, owner_user_id=int(user["id"]))
-    return RedirectResponse(f"/jobs/{jid}", status_code=303)
+    return job_created_response(request, jid, f"/instances/{name}")
 
 @app.post("/system/cookies-all")
 async def system_cookies_all(request: Request, csrf: str = Form(...), cookie_file: UploadFile = File(...)):
@@ -1279,7 +1404,7 @@ async def system_cookies_all(request: Request, csrf: str = Form(...), cookie_fil
         finally:
             tmp.unlink(missing_ok=True)
     jid = jobs.create("อัปเดต cookies ให้ Player/Full ทุกตัว", work, owner_user_id=int(admin["id"]))
-    return RedirectResponse(f"/jobs/{jid}", status_code=303)
+    return job_created_response(request, jid, "/system")
 
 @app.get("/migrate", response_class=HTMLResponse)
 def migrate_page(request: Request):
@@ -1321,7 +1446,7 @@ def job_migrate(source: str, role: str, replace: bool, start_after: bool, dry_ru
 async def migrate_submit(request: Request, csrf: str = Form(...), source: str = Form(...), role: str = Form(...), replace: str | None = Form(None), start_after: str | None = Form(None), dry_run: str | None = Form(None)):
     admin=require_superadmin(request); check_csrf(request, csrf)
     jid = jobs.create("ย้าย TTMediaBot เก่า", job_migrate, source, role, bool(replace), bool(start_after), bool(dry_run), int(admin["id"]), owner_user_id=int(admin["id"]))
-    return RedirectResponse(f"/jobs/{jid}", status_code=303)
+    return job_created_response(request, jid, "/migrate")
 
 
 @app.get("/healthz")

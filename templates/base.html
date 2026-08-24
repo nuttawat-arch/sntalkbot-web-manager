@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="th">
+<html lang="th" data-web-generation="{{ process_generation or '' }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -28,7 +28,24 @@
 <main id="main" tabindex="-1">
 {% block content %}{% endblock %}
 </main>
-<footer><p>SNTalkBot Web Manager {{ version }} — ออกแบบให้ใช้งานด้วยคีย์บอร์ดและโปรแกรมอ่านหน้าจอได้โดยไม่ต้องลากวาง</p></footer>
+{% if user %}
+<dialog id="job-dialog" aria-labelledby="job-dialog-title" aria-describedby="job-dialog-status">
+  <div class="dialog-head">
+    <h2 id="job-dialog-title" tabindex="-1">กำลังเริ่มงาน</h2>
+    <button id="job-dialog-close" type="button">ปิด</button>
+  </div>
+  <p id="job-dialog-status" role="status" aria-live="polite">กำลังส่งคำสั่ง…</p>
+  <p id="job-dialog-note" class="muted">คุณสามารถปิดหน้าต่างนี้ได้ งานจะทำต่อเบื้องหลัง</p>
+  <p id="job-dialog-recovery" role="status" aria-live="polite" hidden></p>
+  <button type="button" data-copy-target="job-dialog-output">คัดลอกผลลัพธ์</button>
+  <pre id="job-dialog-output" tabindex="0"></pre>
+</dialog>
+{% endif %}
+<footer>
+<p>© 2026 Nuttawat — SNTalkBot Web Manager {{ version }}</p>
+<p><a href="https://github.com/nuttawat-arch">GitHub ผู้พัฒนา</a> | <a href="https://github.com/nuttawat-arch/sntalkbot-web-manager">Source code ของ Web Manager</a></p>
+<p class="muted">ออกแบบให้ใช้งานด้วยคีย์บอร์ดและโปรแกรมอ่านหน้าจอได้โดยไม่ต้องลากวาง</p>
+</footer>
 <script src="/static/app.js"></script>
 </body>
 </html>

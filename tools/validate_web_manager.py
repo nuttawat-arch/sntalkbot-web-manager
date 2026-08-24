@@ -25,6 +25,8 @@ js=(root/'static/app.js').read_text(encoding='utf-8')
 help_tpl=(root/'templates/help.html').read_text(encoding='utf-8')
 dash_tpl=(root/'templates/dashboard.html').read_text(encoding='utf-8')
 system_tpl=(root/'templates/system.html').read_text(encoding='utf-8')
+users_tpl=(root/'templates/users.html').read_text(encoding='utf-8')
+error_tpl=(root/'templates/error.html').read_text(encoding='utf-8')
 guardian=(root/'guardian/snweb_guardian.py').read_text(encoding='utf-8')
 
 mainmod=(root/'webmanager/__main__.py').read_text(encoding='utf-8')
@@ -55,6 +57,10 @@ checks={
  'persistent sessions':'10 * 365 * 24 * 3600' in app,
  'login throttling':'LOGIN_MAX_FAILURES = 8' in app and 'login_blocked' in app,
  'realtime jobs':'StreamingResponse' in app and '/jobs/{jid}/stream' in app and 'EventSource' in js and 'data-job-id' in jobtpl,
+ 'in-page accessible Job dialog':'<dialog id="job-dialog"' in base and 'data-job-form' in system_tpl and 'X-SNTalkBot-Job-Dialog' in app and 'job_created_response' in app and 'showModal()' in js and 'ปิดและกลับไปทำงานต่อ' in js,
+ 'Users page hides create form until requested':'data-disclosure-target="create-user-panel"' in users_tpl and 'id="create-user-panel" hidden' in users_tpl and 'aria-expanded="false"' in users_tpl,
+ 'dashboard isolates malformed instance/realtime data':'Normalize old/new/partial realtime payloads' in app and 'warnings=[]' in app and 'ข้อมูลบางส่วนของ instance นี้อ่านไม่สมบูรณ์' in dash_tpl,
+ 'friendly 500 page has request id':'@app.exception_handler(Exception)' in app and 'request_id=uuid.uuid4()' in app and 'Request ID' in error_tpl,
  'realtime instance SSE':'/instances/{name}/live' in app and 'await asyncio.sleep(0.5)' in app and 'live-instance' in insttpl and 'container_running' in app and 'บอตหยุดอยู่ — ไม่มีข้อมูลสด' in js,
  'room/server realtime fields rendered':'room_users_online' in app and 'server_users_online' in app and 'live-room-users' in insttpl and 'live-server-users' in insttpl and 'admins_in_room_count' in app,
  'service does not run as root':'User=$SERVICE_USER' in installer and 'SERVICE_USER="${SNWEB_SERVICE_USER:-sntalkweb}"' in installer,
@@ -77,9 +83,10 @@ checks={
  'migration template comes from Docker image':'TemporaryDirectory(prefix="snweb-migrate-")' in bridge and 'template.write_text(image_text("/app/config_default.ini")' in bridge,
  'CloudPanel loopback default':'BIND="${SNWEB_BIND:-127.0.0.1}"' in installer and 'PORT="${SNWEB_PORT:-28765}"' in installer,
  'normal-user nav hides privileged pages':"{% if user.role == 'superadmin' %}" in base and '/users' in base and '/system' in base,
- 'admin list excludes bot explained':'ไม่รวมบัญชีของบอตเอง' in insttpl and 'บัญชี TeamTalk ของบอตเอง' in help_tpl,
- 'guide matches API range and command counts':'20000–27999' in help_tpl and '20000–29999' not in help_tpl and '124 canonical commands' in help_tpl and '22 commands' in help_tpl,
- 'guardian architecture documented':'Web Guardian' in help_tpl and '28765' in help_tpl and '28766' in help_tpl and 'Guardian' in system_tpl,
+ 'admin list excludes bot explained':'ไม่รวมบัญชีของบอตเอง' in insttpl,
+ 'user help stays task-focused':'127.0.0.1:28765' in help_tpl and '28766' not in help_tpl and '20000' not in help_tpl and 'privileged bridge' not in help_tpl and '124 canonical commands' not in help_tpl,
+ 'footer has copyright and developer links':'© 2026 Nuttawat' in base and 'https://github.com/nuttawat-arch' in base and 'https://github.com/nuttawat-arch/sntalkbot-web-manager' in base,
+ 'guardian architecture documented':'Guardian' in system_tpl and '28765' in proxyguide and '28766' in proxyguide,
  'stable 28765 Guardian + private 28766 backend defaults':'28766' in mainmod and "'127.0.0.1'" in mainmod and '127.0.0.1:28765' in nginx and 'PUBLIC_PORT' in guardian and 'BACKEND_PORT' in guardian and "'8765'" not in mainmod and ':8765' not in nginx,
  'reverse proxy guide covers standalone and common proxies':all(x in proxyguide for x in ('Standalone','CloudPanel','NGINX','Caddy','Apache','proxy_buffering off','SNWEB_COOKIE_SECURE')),
 }
@@ -120,8 +127,12 @@ try:
 except ValueError:
  pass
 r=client.get('/users'); assert r.status_code==200
+assert 'data-disclosure-target="create-user-panel"' in r.text and 'id="create-user-panel" hidden' in r.text
 m=re.search(r'name=\"csrf\" value=\"([^\"]+)\"',r.text); assert m
 csrf=m.group(1)
+# Job-producing forms support in-page dialog metadata while normal redirects remain available.
+rj=client.post('/system/action',data={'csrf':csrf,'action':'doctor'},headers={'X-SNTalkBot-Job-Dialog':'1','X-SNTalkBot-Return-To':'/system'},follow_redirects=False); assert rj.status_code==202
+meta=rj.json(); assert meta['job_id'] and meta['stream_url'].endswith('/stream') and meta['return_to']=='/system'
 r=client.post('/users/create',data={'csrf':csrf,'username':'customer','display_name':'Customer','password':'customerpass123'},follow_redirects=False); assert r.status_code==303
 admin=mod.STORE.get_user_by_username('rootadmin'); customer=mod.STORE.get_user_by_username('customer'); assert customer
 root=mod.bots_root()
@@ -152,7 +163,7 @@ mod.root_run=tenant_root; mod.root_run_stdin=tenant_root_stdin
 r=client2.get('/instances/new'); assert r.status_code==200 and 'TeamTalk Administrator password' in r.text
 csrf_new=re.search(r'name="csrf" value="([^"]+)"',r.text).group(1)
 r=client2.post('/instances/new',data={'csrf':csrf_new,'name':'tenantbot','role':'manager','hostname':'server.example','tcp_port':'10333','udp_port':'10333','verify_teamtalk_username':'tenantadmin','verify_teamtalk_password':'tenant-proof-secret','username':'botservice','password':'bot-only-secret','language':'th'},follow_redirects=False); assert r.status_code==303
-jid=r.headers['location'].rsplit('/',1)[-1]
+jid=r.headers['location'].rsplit('/',1)[-1].split('?',1)[0]
 for _ in range(100):
  j=mod.jobs.get(jid)
  if j.get('status') in ('success','failed'): break
@@ -171,6 +182,11 @@ j1=mod.jobs.create('admin secret job',lambda:'done',owner_user_id=admin['id']); 
 assert client2.get('/jobs/'+j1).status_code==404
 j2=mod.jobs.create('customer job',lambda:'done',owner_user_id=customer['id']); time.sleep(.1)
 assert client2.get('/jobs/'+j2).status_code==200
+# One malformed migrated instance must not turn the whole dashboard into HTTP 500.
+bad=root/'brokenmigrate'; bad.mkdir(); (bad/'config.ini').write_text('[broken\\nvalue=x\\n'); mod.STORE.set_owner('brokenmigrate',admin['id'],'')
+r=client.get('/'); assert r.status_code==200 and 'brokenmigrate' in r.text and 'ข้อมูลบางส่วนของ instance นี้อ่านไม่สมบูรณ์' in r.text
+partial=mod.normalize_live_payload({'room_users_online':1,'player':{'title':'เพลงทดสอบ'},'channel':None,'teamtalk_activity':None})
+assert partial['channel']=={'id':0,'name':''} and partial['teamtalk_activity']['speaking']==0 and partial['player']['queue']==[]
 print('FUNCTIONAL_OK')
 """ % str(root)
         proc=subprocess.run([sys.executable,'-c',test_code],env=env,capture_output=True,text=True,timeout=30)
@@ -222,7 +238,7 @@ r=client.get('/'); assert r.status_code==200
 csrf=re.search(r'name="csrf" value="([^"]+)"',r.text).group(1)
 # Create action
 r=client.post('/instances/new',data={'csrf':csrf,'name':'actionbot','role':'full','nickname':'Action Bot','hostname':'teamtalk.example','tcp_port':'10333','udp_port':'10333','owner_teamtalk_username':'owneradmin','authorized_users':'owneradmin','language':'th','status_message':'auto'},follow_redirects=False); assert r.status_code==303
-jid=r.headers['location'].rsplit('/',1)[-1]
+jid=r.headers['location'].rsplit('/',1)[-1].split('?',1)[0]
 for _ in range(100):
     j=mod.jobs.get(jid)
     if j.get('status') in ('success','failed'): break
@@ -280,7 +296,7 @@ mod.live_state=orig_live_state
 r=client.get('/'); assert r.status_code==200 and 'ลบ instance นี้' in r.text and 'confirm_name' in r.text
 # Delete last; ownership must be removed only after the job action is queued/executed.
 r=client.post('/instances/actionbot/action',data={'csrf':csrf,'action':'delete','confirm_name':'actionbot'},follow_redirects=False); assert r.status_code==303
-jid=r.headers['location'].rsplit('/',1)[-1]
+jid=r.headers['location'].rsplit('/',1)[-1].split('?',1)[0]
 for _ in range(100):
     j=mod.jobs.get(jid)
     if j.get('status') in ('success','failed'): break

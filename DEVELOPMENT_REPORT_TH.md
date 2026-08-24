@@ -1,3 +1,21 @@
+# Development Report — Web Manager 1.1.8 (UX / 500 Resilience)
+
+## Production evidence / issue
+- หลัง migration 7 TTMediaBot สำเร็จ ผู้ใช้รายงานว่า `botmgr` เคยตอบ bare `Internal Server Error` ขณะที่ SNTalkBot playback ยังทำงานปกติ; log ที่ได้รับไม่มี traceback จึงไม่อ้างสาเหตุเฉพาะเจาะจง
+- Harden จุดเสี่ยงที่พบจาก audit: Dashboard เดิมพึ่งโครงสร้าง config/realtime ของทุก instance มากเกินไป ทำให้ payload ผิดรูป/กึ่งอัปเดตมีโอกาสลากทั้งหน้า 500
+
+## Changes
+- per-instance fault isolation + defensive realtime normalization; instance ผิดรูปเตือนเฉพาะการ์ด
+- generic 500 page ภาษาไทยพร้อม Request ID และ server-side traceback logging
+- Users list-first disclosure; create form ไม่แสดงจนผู้ใช้กด
+- in-page accessible Job dialog สำหรับงานยาว: focus, realtime SSE, copy, close-and-continue, same-page refresh หลังจบ
+- user help ลด internal implementation; footer copyright/GitHub
+
+## Validation
+- TestClient จำลอง malformed migrated config แล้ว `/` ต้องยัง 200 และแสดง warning เฉพาะ instance
+- dialog Job initiation ต้องตอบ 202 JSON; legacy/no-JS fallback 303 Job page ยังคงอยู่
+- action matrix, tenant isolation, credential proof, stopped-only delete, Guardian POST/SSE, updater rollback, Bash/LF ผ่าน
+
 # Development Report — Web Manager 1.1.7 (Credential Proof / Stopped-only Delete)
 
 ## 2026-08-25

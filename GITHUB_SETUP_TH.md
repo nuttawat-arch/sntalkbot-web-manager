@@ -1,4 +1,4 @@
-# นำ SNTalkBot Web Manager 1.1.7 ขึ้น GitHub
+# นำ SNTalkBot Web Manager 1.1.8 ขึ้น GitHub
 
 ชื่อ repository ที่ระบบใช้เป็นค่าเริ่มต้น: `nuttawat-arch/sntalkbot-web-manager`
 
@@ -8,7 +8,7 @@ repository นี้ **จำเป็น** เมื่อจะใช้ Git c
 git init
 git branch -M main
 git add -A
-git commit -m "Initial SNTalkBot Web Manager 1.1.7"
+git commit -m "Initial SNTalkBot Web Manager 1.1.8"
 git remote add origin https://github.com/nuttawat-arch/sntalkbot-web-manager.git
 git push -u origin main
 ```
@@ -29,7 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/nuttawat-arch/sntalkbot-web-manager
 
 ## สิ่งที่ห้าม commit
 
-Web Manager 1.1.7 ใช้ SQLite ไม่ได้ใช้ `auth.json` เป็นฐานบัญชีอีกแล้ว ข้อมูล/secret จริงอยู่ภายนอก source tree เช่น:
+Web Manager 1.1.8 ใช้ SQLite ไม่ได้ใช้ `auth.json` เป็นฐานบัญชีอีกแล้ว ข้อมูล/secret จริงอยู่ภายนอก source tree เช่น:
 
 - `/var/lib/sntalkbot-web-manager/webmanager.db`
 - `/etc/sntalkbot-web-manager/session_secret`

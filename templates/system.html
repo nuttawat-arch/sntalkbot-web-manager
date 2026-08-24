@@ -10,10 +10,10 @@
 <dt>Instance root</dt><dd><code>{{ system.bots_root }}</code></dd>
 </dl>
 <h3>ติดตั้งครั้งแรก/ซ่อม Core Stack</h3><p>ระบบจะตรวจ <code>git</code>, <code>curl</code>, <code>python3</code> และ Docker ก่อนทุกครั้ง แล้วติดตั้งเฉพาะสิ่งที่ยังไม่มี จากนั้น clone/update เฉพาะ TTUHelper, ให้ installer pull SNTalkBot Docker image, รัน installer และ doctor ผลทุกขั้นตอนแสดงแบบ realtime ในหน้า Job</p>
-<form method="post" action="/system/action"><input type="hidden" name="csrf" value="{{ csrf }}"><button name="action" value="install-stack">ตรวจและติดตั้ง/ซ่อม Core Stack</button></form>
-<h3>อัปเดต</h3><form class="actions" method="post" action="/system/action"><input type="hidden" name="csrf" value="{{ csrf }}">
+<form method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><button name="action" value="install-stack">ตรวจและติดตั้ง/ซ่อม Core Stack</button></form>
+<h3>อัปเดต</h3><form class="actions" method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}">
 <button name="action" value="update-web">อัปเดต Web Manager</button><button name="action" value="update-helper">อัปเดต TTUHelper + install</button><button name="action" value="pull-image">Pull SNTalkBot image ล่าสุด</button><button name="action" value="update-running">อัปเดตบอตที่กำลังรันทั้งหมด</button><button name="action" value="doctor">รัน doctor</button></form>
-<h3>Cookies ทุก Player/Full</h3><form method="post" action="/system/cookies-all" enctype="multipart/form-data"><input type="hidden" name="csrf" value="{{ csrf }}"><label for="all_cookie_file">Netscape cookies.txt</label><input id="all_cookie_file" type="file" name="cookie_file" required><button type="submit">แทน cookies ให้ Player/Full ทุกตัว</button></form>
-<h3>หลาย instance</h3><form class="actions" method="post" action="/system/action"><input type="hidden" name="csrf" value="{{ csrf }}"><button name="action" value="start-all">เริ่มทั้งหมด</button><button name="action" value="stop-all">หยุดทั้งหมด</button></form>
+<h3>Cookies ทุก Player/Full</h3><form method="post" action="/system/cookies-all" enctype="multipart/form-data" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><label for="all_cookie_file">Netscape cookies.txt</label><input id="all_cookie_file" type="file" name="cookie_file" required><button type="submit">แทน cookies ให้ Player/Full ทุกตัว</button></form>
+<h3>หลาย instance</h3><form class="actions" method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><button name="action" value="start-all">เริ่มทั้งหมด</button><button name="action" value="stop-all">หยุดทั้งหมด</button></form>
 <p class="warning">เมนูนี้มีเฉพาะ Super Admin งานสิทธิ์ root จะผ่าน privileged bridge ที่มี allowlist ไม่ได้เปิด root terminal ให้หน้าเว็บ</p>
 {% endblock %}

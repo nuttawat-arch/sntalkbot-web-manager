@@ -1,3 +1,13 @@
+# SNTalkBot Web Manager 1.1.8 — Web UX / Dashboard Resilience
+
+- หน้า **บัญชีผู้ใช้** แสดงรายชื่อก่อน และซ่อนฟอร์มสร้างบัญชีจนกด “สร้างบัญชีผู้ใช้”; เปิด/ปิดแบบ disclosure พร้อมย้ายโฟกัสให้โปรแกรมอ่านหน้าจอ
+- งาน Update, Migration, Start/Stop/Restart/Delete และงานตรวจที่ใช้เวลานานเปิดเป็น **dialog ภายในหน้าเดิม** พร้อมสถานะสด, คัดลอกผลลัพธ์, ปิดได้โดยงานยังทำต่อ และเมื่อจบแล้วปิดเพื่อรีเฟรช/กลับหน้าเดิม
+- เพิ่ม fault isolation ของ Dashboard: config/container/realtime/owner ของ instance ใดผิดรูปหรืออ่านไม่ได้จะเตือนเฉพาะการ์ดนั้น ไม่ทำให้ Dashboard ทั้งหน้ากลายเป็น HTTP 500
+- เพิ่มหน้า error ภาษาไทยพร้อม Request ID สำหรับ exception ที่ไม่คาดคิด เพื่อรายงานได้โดยไม่เปิดเผย password/token/cookies
+- ปรับคู่มือในเว็บให้เป็นงานที่ผู้ใช้ต้องทำจริง ลดรายละเอียดพอร์ต/backend/bridge ภายใน เหลือ Reverse Proxy target `http://127.0.0.1:28765` ที่จำเป็น
+- เพิ่ม footer ลิขสิทธิ์ `© 2026 Nuttawat`, GitHub ผู้พัฒนา และ source repository ของ Web Manager
+- คง Guardian 1.0.0, credential proof, stopped-only Delete, tenant isolation และ action safety เดิม
+
 # SNTalkBot Web Manager 1.1.7 — Self-service TeamTalk Admin Proof
 
 - ลูกค้าไม่ต้องใช้ Web username เดียวกับ TeamTalk username และไม่ต้องรอ Super Admin ผูก identity เป็น authorization gate

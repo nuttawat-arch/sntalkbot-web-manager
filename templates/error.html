@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block title %}เกิดข้อผิดพลาด — SNTalkBot Web Manager{% endblock %}{% block content %}
+<h2>หน้าเว็บพบข้อผิดพลาด</h2>
+<p class="error" role="alert">Web Manager ไม่สามารถสร้างหน้านี้ได้ในคำขอนี้ แต่การทำงานของบอตและ Docker ไม่ได้ถูกหยุดโดยข้อความนี้</p>
+<p>ลอง <a href="/">กลับแดชบอร์ด</a> หรือเปิดหน้าเดิมอีกครั้ง หากเกิดซ้ำให้แจ้ง Request ID ด้านล่างเพื่อค้นหา traceback ใน service log โดยไม่ต้องส่งรหัสผ่านหรือ token</p>
+<p>Request ID: <code>{{ request_id }}</code></p>
+{% endblock %}

@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block title %}สร้างบอตใหม่{% endblock %}{% block content %}
 <h2>สร้างบอตใหม่</h2>
 <p>{% if user.role == 'superadmin' %}<strong>Super Admin ของเว็บ</strong> สามารถสร้าง instance บน TeamTalk server ใดก็ได้โดยไม่ต้องผ่านการยืนยันเจ้าของ; บอตยังต้องมีข้อมูลเชื่อมต่อที่ถูกต้องจึงจะออนไลน์ได้{% else %}<strong>บัญชีเว็บกับ TeamTalk ไม่จำเป็นต้องชื่อเดียวกัน</strong> คุณยืนยันสิทธิ์เองด้วย TeamTalk Administrator username/password ของเซิร์ฟเวอร์เป้าหมาย ระบบจะ login ชั่วคราวเพื่อตรวจว่า credentials ถูกต้องและ account เป็น Administrator จริง แล้วตัดการเชื่อมต่อทันที รหัสผ่านชุดยืนยันไม่ถูกเก็บในฐานข้อมูล, config หรือ Job log{% endif %}</p>
-<form method="post" action="/instances/new">
+<form method="post" action="/instances/new" data-job-form>
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <fieldset><legend>ประเภทบอต</legend>
 <label><input type="radio" name="role" value="full" checked> Full Bot — Player + Server Manager</label>
