@@ -1,6 +1,7 @@
 {% extends "base.html" %}{% block title %}ระบบและอัปเดต{% endblock %}{% block content %}
 <h2>ตรวจระบบ / ติดตั้ง / อัปเดต</h2>
 <dl>
+<dt>Web Guardian</dt><dd>{% if system.guardian %}พร้อม — Guardian {{ system.guardian.guardian_version }} | {{ system.guardian.backend }}{% else %}<strong>ยังไม่ทำงาน</strong> — การอัปเดตเว็บอาจทำให้ reverse proxy เห็น backend ขาดช่วง{% endif %}</dd>
 <dt>Web Manager</dt><dd>{{ system.web_version }}{% if system.web_remote %} | รุ่นบน GitHub {{ system.web_remote }}{% if system.web_remote != system.web_version %} — <strong>มี Web Manager รุ่นใหม่</strong>{% endif %}{% endif %}</dd>
 <dt>TTUHelper</dt><dd>{{ system.helper_version or 'ยังไม่ติดตั้ง' }}{% if system.helper_remote %} | รุ่นบน GitHub {{ system.helper_remote }}{% if system.helper_version and system.helper_remote != system.helper_version %} — <strong>มี TTUHelper รุ่นใหม่</strong>{% endif %}{% endif %}</dd>
 <dt>SNTalkBot image</dt><dd>{{ system.bot_image_version or 'ยังอ่านเวอร์ชันไม่ได้' }} — <code>{{ system.image }}</code></dd>

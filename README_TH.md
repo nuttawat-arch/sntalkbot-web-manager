@@ -1,14 +1,22 @@
-# SNTalkBot Web Manager 1.1.4
+# SNTalkBot Web Manager 1.1.5
 
 เว็บแดชบอร์ด self-hosted สำหรับจัดการ SNTalkBot และ TTUHelper หลาย instance โดยไม่ต้องพิมพ์คำสั่ง Linux ทุกครั้ง เหมาะกับเครื่อง Ubuntu/Debian ที่รัน SNTalkBot/TTUHelper และออกแบบให้ใช้ได้ทั้งเจ้าของเครื่องคนเดียวหรือหลายบัญชีลูกค้า
 
-Web Manager เป็นโปรเจกต์สำหรับผู้ใช้โฮสต์เอง ไม่เกี่ยวกับ Download Site หรือ Report API ของผู้พัฒนา
+Web Manager เป็นโปรเจกต์สำหรับผู้ใช้โฮสต์เองและทำงานแยกจากโครงสร้างเว็บไซต์ของผู้พัฒนา
+
+## Stable Web Guardian
+
+Reverse Proxy/CloudPanel คงชี้ `http://127.0.0.1:28765` เหมือนเดิม แต่พอร์ตนี้เป็น Guardian service ที่ไม่ถูก restart ไปพร้อม Web Manager ในการ self-update ปกติ ส่วน FastAPI backend อยู่ที่ `127.0.0.1:28766`. ระหว่าง backend restart Guardian ตอบหน้า maintenance/Retry-After แทน raw 502 และหน้า Job จะรอตรวจ `/healthz` จน process generation ใหม่กลับมา.
+
+Realtime ของ SNTalkBot 5.1.2+ แยก `room_users_online` ออกจาก `server_users_online`; หน้าเว็บใช้จำนวนคนในห้องเป็นตัวเลขหลัก และตัด TeamTalk username ของบอตออกจาก Administrator ทุก session. เมื่อ container หยุด snapshot เดิมจะไม่ถูกนำมาแสดงเป็นข้อมูลสด.
+
+SNTalkBot Full มี 124 canonical commands และ TTUHelper มี 22 commands. `. <queue_position>` / `, <queue_position>` เป็น syntax ของ commands `.`/`,` เดิม จึงไม่เพิ่ม canonical count.
 
 ## 3 โปรเจกต์ที่ผู้ใช้โฮสต์เอง
 
 1. **SNTalkBot 5.1.0+** — ตัวบอตหลักและ Realtime Status API ภายใน
 2. **TTUHelper 1.5.0+** — จัดการหลาย instance, Docker, update, delete, API port/token และ Linux data layout
-3. **SNTalkBot Web Manager 1.1.4+** — หน้าเว็บจัดการสองโปรเจกต์ด้านบน
+3. **SNTalkBot Web Manager 1.1.5+** — หน้าเว็บจัดการสองโปรเจกต์ด้านบน
 
 ## ความสามารถหลัก
 
@@ -31,12 +39,13 @@ Web Manager เป็นโปรเจกต์สำหรับผู้ใ�
 
 ## สถานะสดที่ Dashboard รองรับ
 
-เมื่อใช้ SNTalkBot 5.1.0 + TTUHelper 1.5.0 เว็บสามารถแสดงตาม role ได้ เช่น:
+เมื่อใช้ SNTalkBot 5.1.2 + TTUHelper 1.5.2 เว็บสามารถแสดงตาม role ได้ เช่น:
 
 - connected/server/channel/nickname/status/uptime
-- จำนวนผู้ใช้ออนไลน์
-- จำนวนผู้พูด/Media/Video/Desktop
-- Administrator ที่ออนไลน์ โดยตัด user ID ของบอตเองออก
+- จำนวนคนในห้องปัจจุบัน (ไม่นับ session ที่ใช้บัญชีของบอต) และจำนวนผู้ใช้ทั้งเซิร์ฟเวอร์แยกกัน
+- รายชื่อคนในห้องพร้อม User ID, username/nickname, account type, status, client และ Voice/Media/Video/Desktop
+- จำนวนกิจกรรม Voice/Media/Video/Desktop แยกห้องปัจจุบันกับทั้งเซิร์ฟเวอร์
+- Administrator ที่ออนไลน์ทั้งเซิร์ฟเวอร์และในห้องปัจจุบัน โดยตัดทั้ง User ID ของบอตและทุก session ที่ใช้ TeamTalk username ของบอตเองออก
 - Player: เพลงปัจจุบัน, URL, volume, speed, Queue Mode, จำนวนคิว, M1/M2/M3, Autoplay, playlist/Related Radio และรายการคิวพร้อมผู้เพิ่ม
 - Manager: filter, ci, ic, command lock, welcome และ events ล่าสุด
 
@@ -50,34 +59,37 @@ API ของแต่ละบอตใช้พอร์ตสุ่ม `20000
 curl -fsSL https://ttdl.nuttawat.ddnsfree.com/install_web_manager.sh | sudo bash
 ```
 
-bootstrap จะตรวจเครื่องมือ, ดาวน์โหลด Web Manager `latest`, ตรวจ SHA-256 และเรียก installer ต่อให้อัตโนมัติ ค่า default ยัง bind เฉพาะ `127.0.0.1:28765`
+bootstrap จะตรวจเครื่องมือ, ดาวน์โหลด Web Manager `latest`, ตรวจ SHA-256 และเรียก installer ต่อให้อัตโนมัติ ค่า default ให้ Guardian bind เฉพาะ `127.0.0.1:28765` และ FastAPI backend bind `127.0.0.1:28766`
 
 
 ## Production layout แบบ Docker-only
 
-Web Manager 1.1.4 ไม่ต้องมี SNTalkBot source checkout ที่ `/opt/sntalkbot` บน production host อีกแล้ว ตัวบอตจริงมาจาก Docker image ที่ TTUHelper กำหนด และข้อมูลแต่ละ instance อยู่ที่ `/opt/sntalkbot-bots/` ตาม production architecture ปัจจุบัน การสร้าง instance และ migration จะอ่าน `config_default.ini` จาก Docker image โดยตรง ส่วน `/opt/ttuhelper` และ `/opt/sntalkbot-web-manager` ยังคงเป็น source/tool บน host ตามหน้าที่ของตนเอง
+Web Manager 1.1.5 ไม่ต้องมี SNTalkBot source checkout ที่ `/opt/sntalkbot` บน production host อีกแล้ว ตัวบอตจริงมาจาก Docker image ที่ TTUHelper กำหนด และข้อมูลแต่ละ instance อยู่ที่ `/opt/sntalkbot-bots/` ตาม production architecture ปัจจุบัน การสร้าง instance และ migration จะอ่าน `config_default.ini` จาก Docker image โดยตรง ส่วน `/opt/ttuhelper` และ `/opt/sntalkbot-web-manager` ยังคงเป็น source/tool บน host ตามหน้าที่ของตนเอง
 
 ## การติดตั้งจาก ZIP
 
 ```bash
 sudo mkdir -p /opt/sntalkbot-web-manager
-sudo unzip -o SNTalkBot-Web-Manager-1.1.4.zip -d /opt/sntalkbot-web-manager
+sudo unzip -o SNTalkBot-Web-Manager-1.1.5.zip -d /opt/sntalkbot-web-manager
 cd /opt/sntalkbot-web-manager
 sudo chmod +x install.sh install_remote.sh
 sudo ./install.sh
 ```
 
-ค่า default Web Manager ฟังเฉพาะ:
+ค่า default แยกเป็น 2 service:
 
 ```text
-127.0.0.1:28765
+127.0.0.1:28765  Web Guardian (Reverse Proxy ชี้มาที่นี่)
+127.0.0.1:28766  FastAPI Web Manager backend (ภายในเท่านั้น)
 ```
 
 ตรวจหลังติดตั้ง:
 
 ```bash
-sudo systemctl status sntalkbot-web-manager --no-pager
+sudo systemctl status sntalkbot-web-guardian sntalkbot-web-manager --no-pager
+curl -fsS http://127.0.0.1:28765/guardian-healthz
 curl -fsS http://127.0.0.1:28765/healthz
+curl -fsS http://127.0.0.1:28766/healthz
 ```
 
 จากนั้นเปิดผ่าน Reverse Proxy/HTTPS แล้วสร้าง Super Admin คนแรกจากหน้าเว็บ
@@ -121,7 +133,7 @@ sudo env SNWEB_BIND=0.0.0.0 SNWEB_PORT=28765 ./install.sh
 http://127.0.0.1:28765
 ```
 
-หลัง HTTPS ใช้งานได้ให้ตั้ง `SNWEB_COOKIE_SECURE=true` และ restart service
+หลัง HTTPS ใช้งานได้ให้ตั้ง `SNWEB_COOKIE_SECURE=true` และ restart เฉพาะ `sntalkbot-web-manager`; Guardian ไม่ต้อง restart เพราะค่านี้เป็นของ FastAPI/session cookie
 
 คู่มือ `REVERSE_PROXY_GUIDE_TH.md` มีขั้นตอนแบบละเอียดสำหรับ:
 
@@ -135,7 +147,7 @@ http://127.0.0.1:28765
 
 ## สิทธิ์ Linux / root
 
-Web application รันด้วย system user `sntalkweb` ไม่ใช่ root ตลอดเวลา งานที่ต้องใช้ root เช่น Docker, install/update/delete/migrate จะผ่าน root-owned privileged bridge ที่มี allowlist ตายตัว
+Web application และ Guardian รันด้วย system user `sntalkweb` ไม่ใช่ root ตลอดเวลา งานที่ต้องใช้ root เช่น Docker, install/update/delete/migrate จะผ่าน root-owned privileged bridge ที่มี allowlist ตายตัว
 
 - ไม่มี arbitrary web shell
 - ไม่มี `shell=True`
@@ -146,7 +158,7 @@ Web application รันด้วย system user `sntalkweb` ไม่ใช่
 
 ## ถ้ายังไม่มี SNTalkBot/TTUHelper
 
-Super Admin ใช้หน้า **ระบบ/อัปเดต → ติดตั้ง/ซ่อม Core Stack** ได้ ระบบจะ preflight ก่อนว่ามี `git`, `curl`, `python3`, CA certificates, Docker และ dependency ที่จำเป็นหรือไม่ แล้วติดตั้งเฉพาะสิ่งที่ขาด ก่อน clone/update SNTalkBot + TTUHelper, รัน installer และ `ttuhelper doctor`
+Super Admin ใช้หน้า **ระบบ/อัปเดต → ติดตั้ง/ซ่อม Core Stack** ได้ ระบบจะ preflight ก่อนว่ามี `git`, `curl`, `python3`, CA certificates, Docker และ dependency ที่จำเป็นหรือไม่ แล้วติดตั้งเฉพาะสิ่งที่ขาด ก่อน staged-update TTUHelper, ให้ TTUHelper pull SNTalkBot Docker image, รัน installer และ `ttuhelper doctor`
 
 Progress/Error จะแสดงขึ้นหน้า Job แบบ realtime ไม่ต้องรอจนคำสั่งทั้งหมดจบ
 

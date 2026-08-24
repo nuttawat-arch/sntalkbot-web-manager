@@ -2,7 +2,8 @@
 <h2>{{ job.title }}</h2>
 <p id="job-status" role="status" aria-live="polite">สถานะ: <strong>{{ job.status }}</strong></p>
 <p id="job-running-note" {% if job.status not in ('queued','running') %}hidden{% endif %}>ผลลัพธ์ด้านล่างจะอัปเดตทันทีระหว่างทำงาน หากคำสั่งใดเกิด error จะเห็นบรรทัดนั้นโดยไม่ต้องรอให้งานทั้งหมดจบ</p>
+{% if job.kind == 'update-web' %}<p id="web-update-recovery" role="status" aria-live="polite" hidden>Web Manager กำลังเริ่ม process รุ่นใหม่ Guardian จะคงหน้าเว็บไว้และตรวจการกลับมาออนไลน์ให้อัตโนมัติ</p>{% endif %}
 <button type="button" data-copy-target="jobout">คัดลอกผลลัพธ์</button>
-<pre id="jobout" tabindex="0" data-job-id="{{ job.id }}">{{ job.output }}</pre>
-<p><a href="/">กลับแดชบอร์ด</a></p>
+<pre id="jobout" tabindex="0" data-job-id="{{ job.id }}" data-job-kind="{{ job.kind or '' }}" data-web-generation="{{ process_generation }}">{{ job.output }}</pre>
+<p><a href="/">กลับแดชบอร์ด</a>{% if job.kind == 'update-web' %} | <a href="/system">กลับระบบ/อัปเดต</a>{% endif %}</p>
 {% endblock %}

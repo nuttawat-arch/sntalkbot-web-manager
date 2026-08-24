@@ -1,3 +1,39 @@
+# DEVELOPMENT REPORT — SNTalkBot Web Manager 1.1.5
+
+วันที่: 2026-08-25
+
+## ปัญหาจากรอบก่อน
+- ขณะ Web Manager restart/self-update Reverse Proxy สามารถเห็น backend หายชั่วคราวและตอบ 502 ได้ เพราะ 1.1.4 เป็น process เดียวที่ถือพอร์ต 28765
+- instance ที่หยุดแล้วอาจยังมี `runtime_status.json` snapshot ล่าสุด ทำให้หน้าเว็บดูเหมือนยังมีข้อมูลสด
+- Dashboard ต้องมีทางลบ instance ที่ค้นหาได้ง่ายแต่ห้ามลบทันที
+- คู่มือบางจุดใช้ช่วง realtime API/ความหมาย “ผู้ใช้ออนไลน์” ไม่ตรง runtime จริง
+
+## สิ่งที่แก้/เพิ่ม
+- เพิ่ม stable Guardian 1.0.0 ถือ public loopback 28765; FastAPI backend ใช้ 28766
+- Guardian ให้ maintenance 503 + Retry-After ระหว่าง backend down และกลับไป proxy อัตโนมัติเมื่อ backendมา
+- routine update ติดตั้ง Guardian เฉพาะครั้งแรกและไม่เขียนทับ/restart service กลางในรอบอัปเดตเว็บ
+- stopped instance ไม่อ่าน stale runtime fallback และ SSE ซ่อน live/player/manager state ทันที
+- เพิ่ม safe-delete group ที่ Dashboard + detail พร้อม exact-name confirmation; TTUHelper ยัง backup ก่อนลบ
+- รองรับ SNTalkBot 5.1.2 room-scoped realtime และแสดงรายละเอียดผู้ใช้/Administrator/activity แยกห้องกับเซิร์ฟเวอร์
+- audit คู่มือกับ route/action จริงและเพิ่ม validator ป้องกัน documentation drift
+
+## ลบอะไร
+- ไม่ลบ action หรือข้อมูลผู้ใช้; เลิกความหมายเดิมที่ใช้ข้อมูลทั้งเซิร์ฟเวอร์เป็น “ผู้ใช้ออนไลน์” ของห้อง และเลิกแสดง stale live snapshot เมื่อ container หยุด
+
+## ผลตรวจ ณ source
+- `python3 tools/validate_web_manager.py` ผ่าน: auth/ownership/create/run/stop/restart/delete/log/config/limits/cookies/system/migration action matrix ครบ
+- stopped-state regression ยืนยันว่า container หยุดแล้ว runtime fallback ถูกซ่อนทั้ง server render และ SSE
+- Guardian runtime regression ผ่านทั้ง maintenance เมื่อ backend down, proxy POST/form, SSE event streaming แบบไม่ buffer และกลับมา proxy อัตโนมัติเมื่อ backendขึ้น
+- updater regression ผ่าน dirty-source staging/backup/rollback และ rollback คืน running process
+- compatibility audit ของ production 1.1.4 ผ่าน: root bridge 1.1.4 เรียก checkout ใหม่ด้วย `SNWEB_DEFER_RESTART=1`; installer 1.1.5 จึง schedule first Guardian transition หลัง Job ตอบกลับ และ delayed restart เดิมของ 1.1.4 กลายเป็น backend restart เพิ่มโดยไม่หยุด Guardian
+- Bash/Python/LF และคู่มือ/พอร์ต/command-count invariants ผ่าน
+
+## สถานะ/สิ่งที่ยังเหลือ
+- หลัง PublishFirst ต้องทดสอบ production self-update 1.1.4 → 1.1.5 ผ่านหน้าเว็บหนึ่งครั้ง, ทดสอบ stopped instance, safe delete ด้วย instance ทดสอบ และรัน strict server verifier
+- การย้ายจากระบบเดิมที่ Web Manager ถือ 28765 ไป Guardian เป็น migration ครั้งแรก จึงอาจมีช่องว่างระดับสั้นมากครั้งเดียวตอนสลับผู้ถือ socket; หลัง Guardian ทำงานแล้ว routine self-update จะไม่ทำให้ public socket หาย
+
+---
+
 # DEVELOPMENT REPORT — SNTalkBot Web Manager 1.1.4
 
 ## ปัญหาที่พบจาก production 1.1.3

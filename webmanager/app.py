@@ -63,6 +63,8 @@ _LOGIN_LOCK = threading.Lock()
 _LOGIN_FAILURES = {}
 LOGIN_WINDOW = 300
 LOGIN_MAX_FAILURES = 8
+PROCESS_STARTED_EPOCH = time.time()
+PROCESS_GENERATION = uuid.uuid4().hex
 
 def _session_secret():
     env = os.getenv("SNWEB_SESSION_SECRET", "").strip()
@@ -159,6 +161,24 @@ def read_instance_meta(path: Path):
     return data
 
 
+def normalize_live_payload(data):
+    """Normalize old/new SNTalkBot realtime schemas without mislabeling totals.
+
+    SNTalkBot 5.1.2 makes users_online room-scoped and adds explicit room/server
+    fields. Older snapshots used users_online for the whole server, so leave
+    room_users_online unknown instead of presenting a server total as room data.
+    """
+    if not isinstance(data, dict):
+        return data
+    if "room_users_online" not in data:
+        data["server_users_online"] = data.get("server_users_online", data.get("users_online"))
+        data["room_users_online"] = None
+        data.setdefault("room_users", [])
+        data.setdefault("admins_in_room_count", None)
+        data.setdefault("server_teamtalk_activity", data.get("teamtalk_activity") or {})
+    return data
+
+
 def bot_api_status(path: Path):
     meta = read_instance_meta(path)
     try:
@@ -178,12 +198,16 @@ def bot_api_status(path: Path):
             data["transport"] = "http-api"
             data["stale"] = False
             data["age_seconds"] = 0
-            return data
+            return normalize_live_payload(data)
     except Exception:
         return None
 
 
-def live_state(path: Path):
+def live_state(path: Path, *, running: bool = True):
+    # Never surface a recent runtime_status.json snapshot after the container
+    # has stopped.  It is historical data at that point, not live state.
+    if not running:
+        return None
     return bot_api_status(path) or runtime_state(path)
 
 
@@ -294,7 +318,7 @@ def runtime_state(path: Path):
         age = time.time() - float(data.get("updated_epoch") or 0)
         data["stale"] = age > 15
         data["age_seconds"] = max(0, int(age))
-        return data
+        return normalize_live_payload(data)
     except Exception:
         return None
 
@@ -314,7 +338,7 @@ def list_instances(user=None):
             continue
         cfg = read_config(path / "config.ini")
         cont = docker_container(path.name)
-        live = live_state(path)
+        live = live_state(path, running=bool(cont and cont["running"]))
         owner = STORE.owner(path.name)
         result.append({
             "name": path.name,
@@ -368,7 +392,7 @@ class JobManager:
         safe = {
             "id": job.get("id"), "title": job.get("title"), "status": job.get("status"),
             "created": job.get("created"), "finished": job.get("finished"),
-            "owner_user_id": job.get("owner_user_id"),
+            "owner_user_id": job.get("owner_user_id"), "kind": job.get("kind"),
         }
         try:
             path = self._meta_path(job["id"])
@@ -377,12 +401,13 @@ class JobManager:
         except Exception:
             pass
 
-    def create(self, title, func, *args, owner_user_id=None, **kwargs):
+    def create(self, title, func, *args, owner_user_id=None, kind=None, **kwargs):
         jid = uuid.uuid4().hex[:12]
         job = {
             "id": jid, "title": title, "status": "queued", "created": time.time(),
             "finished": None, "output": "",
             "owner_user_id": int(owner_user_id) if owner_user_id is not None else None,
+            "kind": kind,
         }
         with self.cond:
             self.jobs[jid] = job
@@ -738,6 +763,19 @@ def remote_image_digest():
     return match.group(1).lower() if match else None
 
 
+def guardian_status():
+    port = int(os.getenv("SNWEB_PORT", "28765") or 28765)
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/guardian-healthz", headers={"Accept":"application/json"})
+        with urllib.request.urlopen(req, timeout=0.6) as resp:
+            data=json.loads(resp.read(65536).decode("utf-8","replace"))
+        if data.get("ok"):
+            return data
+    except Exception:
+        pass
+    return None
+
+
 def system_status(include_remote=False):
     settings = helper_settings()
     data = {
@@ -753,6 +791,7 @@ def system_status(include_remote=False):
         "remote_image_digest": None,
         "bots_root": settings["TTU_BOTS_ROOT"],
         "helper_source": str(TTU_SOURCE),
+        "guardian": guardian_status(),
     }
     if include_remote:
         data["web_remote"] = remote_version(WEB_REPO)
@@ -918,7 +957,7 @@ async def system_action(request: Request, action: str = Form(...), csrf: str = F
     if action not in mapping:
         raise HTTPException(status_code=400, detail="Unknown action")
     title, func, args = mapping[action]
-    jid = jobs.create(title, func, *args, owner_user_id=int(user["id"]))
+    jid = jobs.create(title, func, *args, owner_user_id=int(user["id"]), kind=action)
     return RedirectResponse(f"/jobs/{jid}", status_code=303)
 
 
@@ -928,7 +967,7 @@ def job_page(request: Request, jid: str):
     job = jobs.get(jid)
     if not job or not can_view_job(user, job):
         raise HTTPException(status_code=404)
-    return templates.TemplateResponse("job.html", {"request": request, "user":user, "job": job, "csrf": csrf_token(request), "version": VERSION})
+    return templates.TemplateResponse("job.html", {"request": request, "user":user, "job": job, "csrf": csrf_token(request), "version": VERSION, "process_generation": PROCESS_GENERATION})
 
 
 @app.get("/jobs/{jid}/stream")
@@ -1044,8 +1083,9 @@ def instance_page(request: Request, name: str, created: int = 0):
         "nickname": cfg.get("bot", "nickname", fallback=name),
         "server": cfg.get("server", "address", fallback=""),
         "default_channel": cfg.get("bot", "default_channel", fallback="/"),
-        "container": docker_container(name), "runtime": live_state(path), "owner": STORE.owner(name),
+        "container": docker_container(name), "runtime": None, "owner": STORE.owner(name),
     }
+    data["runtime"] = live_state(path, running=bool(data["container"] and data["container"]["running"]))
     return templates.TemplateResponse("instance.html", {"request": request, "user":user, "bot": data, "created": created, "csrf": csrf_token(request), "version": VERSION})
 
 
@@ -1069,7 +1109,18 @@ async def instance_live(request: Request, name: str):
     async def generate():
         previous=None
         while True:
-            state=live_state(path) or {"connected":False,"transport":"none"}
+            cont=docker_container(name)
+            running=bool(cont and cont.get("running"))
+            state=live_state(path, running=running) or {
+                "connected":False, "transport":"none", "container_running":running,
+                "player":None, "manager":None, "admins_online":[],
+                "admins_online_count":0, "admins_in_room_count":0,
+                "users_online":0, "room_users_online":0, "server_users_online":0, "room_users":[],
+                "teamtalk_activity":{"speaking":0,"media":0,"video":0,"desktop":0},
+                "server_teamtalk_activity":{"speaking":0,"media":0,"video":0,"desktop":0},
+                "channel":{},
+            }
+            state["container_running"] = running
             payload=json.dumps(state,ensure_ascii=False,separators=(",",":"))
             if payload!=previous:
                 previous=payload
@@ -1209,4 +1260,7 @@ async def migrate_submit(request: Request, csrf: str = Form(...), source: str = 
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "version": VERSION}
+    return {
+        "ok": True, "version": VERSION, "generation": PROCESS_GENERATION,
+        "started_epoch": int(PROCESS_STARTED_EPOCH),
+    }

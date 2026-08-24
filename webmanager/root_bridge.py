@@ -13,6 +13,8 @@ from datetime import datetime
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 CONFIG = Path("/etc/default/sntalkbot-web-manager")
+GUARDIAN_SERVICE = "sntalkbot-web-guardian"
+GUARDIAN_TRANSITION_MARKER = Path("/run/sntalkbot-web-manager-guardian-transition.pending")
 
 
 def settings():
@@ -323,12 +325,16 @@ def main():
     if action=="update-web":
         target=Path(cfg["SNWEB_INSTALL_DIR"])
         install_fresh_checkout(cfg["SNWEB_WEB_REPO"], target, project_name="Web Manager", defer_restart=True)
-        # Restart from a separate transient systemd unit after this privileged
-        # helper exits; restarting directly here can kill the caller's cgroup
-        # before the web job receives its success output.
-        unit="sntalkbot-web-manager-restart-"+datetime.now().strftime("%Y%m%d%H%M%S")
-        run(["systemd-run","--unit",unit,"--on-active=2s","/bin/systemctl","restart","sntalkbot-web-manager"])
-        print("Web Manager updated; restart scheduled in 2 seconds.", flush=True)
+        # The first upgrade that introduces Guardian schedules its own delayed
+        # socket transition from install.sh so an older root bridge can migrate
+        # safely. Once Guardian exists, only restart the FastAPI backend; Guardian
+        # keeps 28765 online and serves maintenance while 28766 is restarting.
+        if GUARDIAN_TRANSITION_MARKER.exists():
+            print("Web Manager updated; first Guardian transition is already scheduled.", flush=True)
+        else:
+            unit="sntalkbot-web-manager-restart-"+datetime.now().strftime("%Y%m%d%H%M%S")
+            run(["systemd-run","--unit",unit,"--on-active=2s","/bin/systemctl","restart","sntalkbot-web-manager"])
+            print("Web Manager updated; backend restart scheduled in 2 seconds while Guardian stays online.", flush=True)
         return 0
     raise SystemExit("action not allowed")
 

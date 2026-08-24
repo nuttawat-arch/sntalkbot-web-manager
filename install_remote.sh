@@ -46,6 +46,8 @@ else
   if [[ -e "$TARGET" || -L "$TARGET" ]]; then mv -- "$TARGET" "$FAILED"; fi
   if ((had_previous)) && [[ -e "$BACKUP" || -L "$BACKUP" ]]; then
     mv -- "$BACKUP" "$TARGET"
+    # Free the legacy public socket before running a pre-Guardian rollback.
+    systemctl stop sntalkbot-web-guardian 2>/dev/null || true
     bash "$TARGET/install.sh" || true
     # The restored installer can itself be an older release that only used
     # `systemctl enable --now`; force-reload the restored source explicitly.

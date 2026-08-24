@@ -1,3 +1,14 @@
+# SNTalkBot Web Manager 1.1.5
+
+- เพิ่ม **SNTalkBot Web Guardian 1.0.0** เป็น service กลางที่คง socket `127.0.0.1:28765` ไว้เสมอ; FastAPI Web Manager ย้ายไป backend `127.0.0.1:28766` จึง restart/self-update ได้โดย Reverse Proxy ไม่เจอ raw 502 ในการอัปเดตปกติหลัง Guardian ติดตั้งแล้ว
+- เมื่อ backend กำลัง restart Guardian แสดงหน้า maintenance ที่อ่านด้วยโปรแกรมอ่านหน้าจอได้และลองเชื่อมต่อใหม่อัตโนมัติ; API ได้ HTTP 503 + `Retry-After` แทน raw proxy failure
+- Guardian เป็น infrastructure คงที่: routine Web Manager update ไม่เขียนทับและไม่ restart Guardian; การเปลี่ยน Guardian ในอนาคตต้องเป็น migration โดยตั้งใจ
+- แก้ Dashboard/หน้า instance ไม่ให้แสดง `runtime_status.json` เก่าหลังบอตหยุด; บอตที่หยุดจะแสดงชัดว่าไม่มีข้อมูลสด
+- เพิ่มกลุ่ม **ลบ instance นี้** บน Dashboard และหน้ารายละเอียด โดยต้องพิมพ์ชื่อ instance ตรงทุกตัวอักษรก่อน TTUHelper สำรองข้อมูลและลบจริง
+- รองรับ realtime schema ของ SNTalkBot 5.1.2: แยกจำนวนคนในห้องปัจจุบัน/ทั้งเซิร์ฟเวอร์, Administrator ในห้อง/ทั้งเซิร์ฟเวอร์, activity ห้อง/เซิร์ฟเวอร์ และรายชื่อผู้ใช้ในห้อง
+- หน้า Job ของ self-update รอ `/healthz` ของ process generation ใหม่และประกาศเมื่อ Web Manager กลับมาออนไลน์แล้ว
+- ตรวจและแก้คู่มือให้ตรง action จริง: TTUHelper มี 22 คำสั่ง; SNTalkBot มี 124 canonical commands และ `. <คิว>` / `, <คิว>` เป็น syntax เพิ่มของ 2 คำสั่งเดิม ไม่เพิ่มจำนวน canonical commands
+
 # SNTalkBot Web Manager 1.1.4
 
 - แก้ upgrade จาก ZIP/bootstrap ที่ source เปลี่ยนเป็นรุ่นใหม่แล้วแต่ process เก่ายังทำงานอยู่ เพราะ `systemctl enable --now` ไม่ restart service ที่ active อยู่
@@ -71,5 +82,5 @@
 - `password_tool.py` เปลี่ยนจาก legacy `auth.json` ไปใช้ SQLite recovery โดยไม่ลบ compatibility command
 - installer สร้าง system group `sntalkweb` อย่างชัดเจน และรักษา `/etc/default/sntalkbot-web-manager` เดิมตอนอัปเกรด
 - Self-update รัน `install.sh` แบบ upgrade-safe เพื่ออัปเดต dependencies/root bridge/systemd แล้ว schedule restart หลัง job จบ
-- เปลี่ยนตัวอย่าง fallback port จาก 28766 เป็น 28775 เพื่อไม่ชน Developer Report API
+- เปลี่ยนตัวอย่าง fallback public port เป็น 28775 เพื่อสงวน 28766 สำหรับ FastAPI backend ภายในของ Web Manager
 

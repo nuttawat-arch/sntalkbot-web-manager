@@ -8,10 +8,14 @@ SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET="${SNWEB_INSTALL_DIR:-/opt/sntalkbot-web-manager}"
 BIND="${SNWEB_BIND:-127.0.0.1}"
 PORT="${SNWEB_PORT:-28765}"
+APP_BIND="${SNWEB_APP_BIND:-127.0.0.1}"
+APP_PORT="${SNWEB_APP_PORT:-28766}"
 SERVICE_USER="${SNWEB_SERVICE_USER:-sntalkweb}"
 DATA_DIR="/var/lib/sntalkbot-web-manager"
 ETC_DIR="/etc/sntalkbot-web-manager"
 ROOT_BRIDGE="/usr/local/lib/sntalkbot-web-manager/snweb-root"
+GUARDIAN_SCRIPT="/usr/local/lib/sntalkbot-web-manager/snweb-guardian.py"
+GUARDIAN_SERVICE="sntalkbot-web-guardian"
 
 has(){ command -v "$1" >/dev/null 2>&1; }
 echo "SNTalkBot Web Manager installer preflight"
@@ -75,6 +79,16 @@ chown root:"$SERVICE_USER" "$ETC_DIR/session_secret"; chmod 0640 "$ETC_DIR/sessi
 
 install -d -m 0755 /usr/local/lib/sntalkbot-web-manager
 install -o root -g root -m 0755 "$TARGET/webmanager/root_bridge.py" "$ROOT_BRIDGE"
+# Guardian is deliberately installed outside the disposable Web Manager source
+# tree and is a stable infrastructure component, not part of routine Web Manager
+# self-update. Install it only once. A future Guardian upgrade must be an explicit
+# migration so disk/process versions cannot silently diverge.
+if [[ ! -f "$GUARDIAN_SCRIPT" ]]; then
+  install -o root -g root -m 0755 "$TARGET/guardian/snweb_guardian.py" "$GUARDIAN_SCRIPT"
+  echo "[OK] Installed stable Web Guardian 1.0.0."
+else
+  echo "[OK] Keeping existing stable Web Guardian unchanged."
+fi
 cat > /etc/sudoers.d/sntalkbot-web-manager <<EOF
 $SERVICE_USER ALL=(root) NOPASSWD: $ROOT_BRIDGE *
 EOF
@@ -112,6 +126,8 @@ else
 fi
 write_default SNWEB_BIND "$BIND"
 write_default SNWEB_PORT "$PORT"
+write_default SNWEB_APP_BIND "$APP_BIND"
+write_default SNWEB_APP_PORT "$APP_PORT"
 write_default SNWEB_DATA_DIR "$DATA_DIR"
 write_default SNWEB_SESSION_SECRET_FILE "$ETC_DIR/session_secret"
 write_default SNWEB_DB_FILE "$DATA_DIR/webmanager.db"
@@ -127,12 +143,14 @@ write_default SNWEB_WEB_REPO "https://github.com/nuttawat-arch/sntalkbot-web-man
 . "$ENV_FILE"
 BIND="${SNWEB_BIND:-$BIND}"
 PORT="${SNWEB_PORT:-$PORT}"
+APP_BIND="${SNWEB_APP_BIND:-$APP_BIND}"
+APP_PORT="${SNWEB_APP_PORT:-$APP_PORT}"
 
 chown root:"$SERVICE_USER" /etc/default/sntalkbot-web-manager; chmod 0640 /etc/default/sntalkbot-web-manager
 
 cat > /etc/systemd/system/sntalkbot-web-manager.service <<EOF
 [Unit]
-Description=SNTalkBot Web Manager
+Description=SNTalkBot Web Manager application backend
 After=network-online.target
 Wants=network-online.target
 
@@ -152,54 +170,110 @@ PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
 EOF
+
+if [[ ! -f /etc/systemd/system/${GUARDIAN_SERVICE}.service ]]; then
+cat > /etc/systemd/system/${GUARDIAN_SERVICE}.service <<EOF
+[Unit]
+Description=SNTalkBot Web Manager stable Guardian proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+Group=$SERVICE_USER
+EnvironmentFile=-/etc/default/sntalkbot-web-manager
+ExecStart=/usr/bin/python3 $GUARDIAN_SCRIPT
+Restart=always
+RestartSec=1
+UMask=0027
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  echo "[OK] Installed stable Web Guardian systemd unit."
+else
+  echo "[OK] Keeping existing stable Web Guardian systemd unit unchanged."
+fi
+
 systemctl daemon-reload
-systemctl enable sntalkbot-web-manager >/dev/null
+systemctl enable sntalkbot-web-manager "$GUARDIAN_SERVICE" >/dev/null
 
 EXPECTED_VERSION="$(tr -d '\r\n' < "$TARGET/VERSION")"
 health_host="$BIND"
 case "$health_host" in
   0.0.0.0|::|\[::\]|"") health_host="127.0.0.1" ;;
 esac
+app_health_host="$APP_BIND"
+case "$app_health_host" in
+  0.0.0.0|::|\[::\]|"") app_health_host="127.0.0.1" ;;
+esac
 health_url="http://${health_host}:${PORT}/healthz"
+app_health_url="http://${app_health_host}:${APP_PORT}/healthz"
+guardian_was_active=0
+systemctl is-active --quiet "$GUARDIAN_SERVICE" && guardian_was_active=1 || true
 
 if [[ "${SNWEB_DEFER_RESTART:-0}" == "1" ]]; then
-  # Self-update is invoked by the running Web Manager itself.  Restarting here
-  # would kill the caller before the job can report success, so root_bridge.py
-  # schedules the restart from a separate transient systemd unit after exit.
-  echo "[INFO] Web Manager restart deferred to the self-update controller."
-  if ! systemctl is-active --quiet sntalkbot-web-manager; then
-    systemctl start sntalkbot-web-manager
+  # A self-update request is currently being served by the old backend. Never
+  # kill that request synchronously. On the first Guardian migration, schedule
+  # a stop-Guardian-start-backend transition after this installer returns.
+  if (( guardian_was_active )); then
+    echo "[INFO] Web Manager backend restart deferred; Guardian remains online on ${BIND}:${PORT}."
+  else
+    marker="/run/sntalkbot-web-manager-guardian-transition.pending"
+    : > "$marker"
+    unit="sntalkbot-web-guardian-transition-$(date +%Y%m%d%H%M%S)-$$"
+    systemd-run --unit="$unit" --on-active=1s /bin/bash -c \
+      "systemctl stop sntalkbot-web-manager; systemctl start $GUARDIAN_SERVICE; systemctl start sntalkbot-web-manager; rm -f '$marker'" >/dev/null
+    echo "[INFO] First Guardian transition scheduled; the current request can finish before sockets move to Guardian ${PORT} -> backend ${APP_PORT}."
   fi
 else
-  # Manual/ZIP/bootstrap upgrades must reload the new source immediately.
-  # `enable --now` alone does not restart an already-active service.
-  systemctl restart sntalkbot-web-manager
+  # Manual/bootstrap install. If Guardian is new, release the old public socket
+  # first, start Guardian immediately, then bring the application up on 28766.
+  if (( guardian_was_active )); then
+    systemctl restart sntalkbot-web-manager
+  else
+    systemctl stop sntalkbot-web-manager 2>/dev/null || true
+    systemctl start "$GUARDIAN_SERVICE"
+    systemctl start sntalkbot-web-manager
+  fi
+
   ok=0
   health=""
-  for _ in {1..20}; do
-    if systemctl is-active --quiet sntalkbot-web-manager; then
-      health="$(curl -fsS "$health_url" 2>/dev/null || true)"
+  app_health=""
+  for _ in {1..30}; do
+    health="$(curl -fsS "$health_url" 2>/dev/null || true)"
+    app_health="$(curl -fsS "$app_health_url" 2>/dev/null || true)"
+    if systemctl is-active --quiet sntalkbot-web-manager && systemctl is-active --quiet "$GUARDIAN_SERVICE"; then
       if [[ "$health" == *"\"version\":\"${EXPECTED_VERSION}\""* || "$health" == *"\"version\": \"${EXPECTED_VERSION}\""* ]]; then
-        ok=1
-        break
+        if [[ "$app_health" == *"\"version\":\"${EXPECTED_VERSION}\""* || "$app_health" == *"\"version\": \"${EXPECTED_VERSION}\""* ]]; then
+          ok=1
+          break
+        fi
       fi
     fi
     sleep 0.5
   done
   if (( ! ok )); then
-    echo "[FAIL] Web Manager did not come back on $health_url with expected version $EXPECTED_VERSION." >&2
-    [[ -n "$health" ]] && echo "Last health response: $health" >&2
-    systemctl --no-pager --full status sntalkbot-web-manager >&2 || true
-    journalctl -u sntalkbot-web-manager -n 40 --no-pager >&2 || true
+    echo "[FAIL] Web Manager/Guardian did not converge on expected version $EXPECTED_VERSION." >&2
+    [[ -n "$health" ]] && echo "Guardian/public health: $health" >&2
+    [[ -n "$app_health" ]] && echo "Backend health: $app_health" >&2
+    systemctl --no-pager --full status "$GUARDIAN_SERVICE" sntalkbot-web-manager >&2 || true
+    journalctl -u "$GUARDIAN_SERVICE" -u sntalkbot-web-manager -n 60 --no-pager >&2 || true
+    # If this was the first migration, release 28765 so an older source rollback
+    # can bind its legacy single service to the original public port again.
+    if (( ! guardian_was_active )); then systemctl stop "$GUARDIAN_SERVICE" || true; fi
     exit 1
   fi
-  echo "[OK] Web Manager restarted and health reports version $EXPECTED_VERSION."
+  echo "[OK] Guardian is stable on ${BIND}:${PORT}; Web Manager backend reports version $EXPECTED_VERSION on ${APP_BIND}:${APP_PORT}."
 fi
 
-systemctl --no-pager --full status sntalkbot-web-manager | sed -n '1,18p' || true
+systemctl --no-pager --full status "$GUARDIAN_SERVICE" sntalkbot-web-manager | sed -n '1,30p' || true
 
 echo
 echo "ติดตั้ง Web Manager เสร็จแล้ว"
 echo "ครั้งแรก: เปิด http://127.0.0.1:$PORT/ ผ่าน reverse proxy แล้วสร้าง Super Admin บนหน้า Setup"
+echo "Guardian คงพอร์ต $PORT ไว้ระหว่างอัปเดต; Web Manager application ทำงานภายในที่ ${APP_BIND}:${APP_PORT}"
 echo "CloudPanel: สร้าง Reverse Proxy Site -> http://127.0.0.1:$PORT"
 echo "หลังเปิด HTTPS ให้แก้ SNWEB_COOKIE_SECURE=\"true\" ใน /etc/default/sntalkbot-web-manager แล้ว restart service"

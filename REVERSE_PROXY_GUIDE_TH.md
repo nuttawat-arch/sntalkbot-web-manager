@@ -1,8 +1,8 @@
-# คู่มือติดตั้ง SNTalkBot Web Manager 1.1.4: Standalone และ Reverse Proxy
+# คู่มือติดตั้ง SNTalkBot Web Manager 1.1.5: Standalone และ Reverse Proxy
 
-Web Manager เป็นบริการ Python/FastAPI ที่ติดตั้งเป็น systemd service ชื่อ `sntalkbot-web-manager` โดยค่าเริ่มต้นจะฟังเฉพาะ `127.0.0.1:28765` เพื่อไม่เปิดหน้าจัดการออก Internet โดยไม่ตั้งใจ
+Web Manager ใช้ 2 service: `sntalkbot-web-guardian` คง socket `127.0.0.1:28765` สำหรับ Reverse Proxy และ `sntalkbot-web-manager` รัน FastAPI backend ที่ `127.0.0.1:28766` โดยค่าเริ่มต้น ทั้งคู่ไม่เปิดหน้าจัดการออก Internet โดยตรง
 
-> พอร์ต `28765` คือพอร์ต Web Manager ส่วน HTTP API ของ SNTalkBot แต่ละ instance ใช้พอร์ตสุ่ม `20000-27999` บน `127.0.0.1` เท่านั้น ทั้งสองช่วงแยกกันและไม่ควรเปิดผ่าน Firewall/Router
+> พอร์ต `28765` คือ stable Guardian/public-upstream ของ Web Manager, `28766` คือ FastAPI backend ภายใน ส่วน HTTP API ของ SNTalkBot แต่ละ instance ใช้พอร์ตสุ่ม `20000-27999` บน `127.0.0.1` เท่านั้น ทั้งสองช่วงแยกกันและไม่ควรเปิดผ่าน Firewall/Router
 
 ## 1. ก่อนติดตั้ง
 
@@ -24,19 +24,21 @@ ss -ltn | grep ':28765 ' || true
 
 ```bash
 sudo mkdir -p /opt/sntalkbot-web-manager
-sudo unzip -o SNTalkBot-Web-Manager-1.1.4.zip -d /opt/sntalkbot-web-manager
+sudo unzip -o SNTalkBot-Web-Manager-1.1.5.zip -d /opt/sntalkbot-web-manager
 cd /opt/sntalkbot-web-manager
 sudo chmod +x install.sh install_remote.sh
 sudo ./install.sh
 ```
 
-ตัวติดตั้งจะตรวจ `python3`, `git`, `curl`, `sudo`, Python venv, CA certificates และ Docker ก่อน ติดตั้งเฉพาะสิ่งที่ขาด จากนั้นสร้าง system user `sntalkweb`, virtual environment, systemd service, session secret และ privileged allowlist bridge
+ตัวติดตั้งจะตรวจ `python3`, `git`, `curl`, `sudo`, Python venv, CA certificates และ Docker ก่อน ติดตั้งเฉพาะสิ่งที่ขาด จากนั้นสร้าง system user `sntalkweb`, virtual environment, stable Guardian service, FastAPI backend service, session secret และ privileged allowlist bridge
 
 ตรวจหลังติดตั้ง:
 
 ```bash
 sudo systemctl status sntalkbot-web-manager --no-pager
+curl -fsS http://127.0.0.1:28765/guardian-healthz
 curl -fsS http://127.0.0.1:28765/healthz
+curl -fsS http://127.0.0.1:28766/healthz
 ```
 
 ## 2.1 ติดตั้งแบบคำสั่งเดียวจาก Download Site
@@ -54,6 +56,8 @@ wget -qO- https://ttdl.nuttawat.ddnsfree.com/install_web_manager.sh | sudo bash
 ```
 
 ตัว bootstrap ตรวจเครื่องมือที่ต้องใช้ก่อน, ดาวน์โหลด `SNTalkBot-Web-Manager-latest.zip` พร้อม `.sha256`, ตรวจ SHA-256 และแตกไป staging ก่อนแตะของเดิม จากนั้นสำรอง source เดิมทั้งโฟลเดอร์แล้วจึงติดตั้งรุ่นใหม่ จึงไม่ติดปัญหา local changes หรือ `.git`; ถ้า installer ล้มจะ restore source รุ่นเดิมให้อัตโนมัติ
+
+ตั้งแต่ 1.1.5 เป็นต้นไป Guardian 1.0.0 เป็น service กลางคงที่และติดตั้งเฉพาะครั้งแรก Routine self-update จะไม่เขียนทับหรือ restart Guardian; หน้าเว็บจึงยังตอบ maintenance/health ได้ระหว่าง FastAPI backend restart การอัปเกรด Guardian ในอนาคตต้องทำเป็น migration แยกโดยตั้งใจ
 
 ## 3. ติดตั้งจาก GitHub
 
@@ -123,6 +127,7 @@ Standalone HTTP จะใช้ `SNWEB_COOKIE_SECURE=false` ตามค่า�
 
 ```bash
 sudo sed -i 's/^SNWEB_BIND=.*/SNWEB_BIND="127.0.0.1"/' /etc/default/sntalkbot-web-manager
+sudo systemctl restart sntalkbot-web-guardian
 sudo systemctl restart sntalkbot-web-manager
 ```
 
@@ -130,7 +135,7 @@ sudo systemctl restart sntalkbot-web-manager
 
 # วิธี B — CloudPanel Reverse Proxy (แนะนำถ้าใช้ CloudPanel)
 
-Web Manager ยังคงฟัง `127.0.0.1:28765` และ CloudPanel เป็นผู้รับ Domain/HTTPS จากภายนอก
+Guardian ยังคงฟัง `127.0.0.1:28765`, FastAPI อยู่ `127.0.0.1:28766` และ CloudPanel เป็นผู้รับ Domain/HTTPS จากภายนอก
 
 ## ผ่านหน้า CloudPanel
 
@@ -312,10 +317,13 @@ Read timeout: 3600 seconds
 
 # 5. หลังตั้ง Reverse Proxy
 
-ตรวจ local service ก่อน:
+ตรวจ local services ก่อน:
 
 ```bash
+systemctl is-active sntalkbot-web-guardian sntalkbot-web-manager
+curl -fsS http://127.0.0.1:28765/guardian-healthz
 curl -fsS http://127.0.0.1:28765/healthz
+curl -fsS http://127.0.0.1:28766/healthz
 ```
 
 แล้วตรวจ domain:
@@ -329,23 +337,23 @@ curl -fsS https://botmgr.example.com/healthz
 ตรวจ systemd log:
 
 ```bash
-sudo journalctl -u sntalkbot-web-manager -n 100 --no-pager
+sudo journalctl -u sntalkbot-web-guardian -u sntalkbot-web-manager -n 100 --no-pager
 ```
 
 Realtime ที่ควรทดสอบ:
 
 1. Login
 2. เปิด instance ที่กำลังรัน
-3. ดูจำนวนผู้ใช้/Administrator/เพลง/คิว
+3. ดูจำนวนคนในห้อง/ทั้งเซิร์ฟเวอร์, Administrator ในห้อง/ทั้งเซิร์ฟเวอร์, รายชื่อคนในห้อง, เพลง/คิว
 4. เปิดหน้า Job แล้วสั่ง `doctor` หรือ update
 5. Output ควรเพิ่มทีละบรรทัดโดยไม่ต้อง refresh
 
 # 6. พอร์ตที่ควรรู้
 
-- `28765/tcp` — Web Manager; ค่า default bind `127.0.0.1`
-- `28775/tcp` — ตัวอย่าง fallback Web Manager ถ้า 28765 ถูกใช้อยู่
+- `28765/tcp` — Web Guardian สำหรับ Reverse Proxy; ค่า default bind `127.0.0.1`
+- `28766/tcp` — Web Manager FastAPI backend; bind `127.0.0.1` เท่านั้นและไม่ต้องเปิด/Proxy โดยตรง
+- `28775/tcp` — ตัวอย่างพอร์ต Guardian สาธารณะทางเลือก หากตั้ง `SNWEB_PORT=28775` เพราะ 28765 ถูก service อื่นใช้
 - `20000-27999/tcp` — SNTalkBot read-only realtime APIs; bind `127.0.0.1` และมี token ต่อ instance
-- `39150/tcp` — Developer Report API Node.js App Port บน CloudPanel (บริการของผู้พัฒนา ไม่ใช่พอร์ต Web Manager)
 - TeamTalk TCP/UDP — ใช้ค่าของ TeamTalk Server เดิม ไม่เกี่ยวกับพอร์ต Web Manager
 
 ห้ามทำ port-forward ช่วง `20000-27999` ออก Internet
@@ -353,12 +361,13 @@ Realtime ที่ควรทดสอบ:
 # 7. คำสั่งดูแล Web Manager
 
 ```bash
-sudo systemctl status sntalkbot-web-manager --no-pager
+sudo systemctl status sntalkbot-web-guardian sntalkbot-web-manager --no-pager
+# Routine Web Manager restart: Guardian ยังอยู่ ไม่ต้อง restart
 sudo systemctl restart sntalkbot-web-manager
-sudo journalctl -u sntalkbot-web-manager -f
+sudo journalctl -u sntalkbot-web-guardian -u sntalkbot-web-manager -f
 ```
 
-หลังแก้ `/etc/default/sntalkbot-web-manager` ต้อง restart service
+หลังแก้ `SNWEB_COOKIE_SECURE` ให้ restart `sntalkbot-web-manager`; ถ้าแก้ `SNWEB_BIND`/`SNWEB_PORT`/`SNWEB_APP_BIND`/`SNWEB_APP_PORT` ต้อง restart ทั้ง Guardian และ Web Manager เพราะ Guardian อ่านค่าพอร์ต/ปลายทางตอนเริ่ม process
 
 # 8. ถ้าเปิดเว็บไม่ได้
 
@@ -368,7 +377,7 @@ sudo journalctl -u sntalkbot-web-manager -f
 sudo systemctl status sntalkbot-web-manager --no-pager
 sudo ss -ltnp | grep ':28765 '
 curl -v http://127.0.0.1:28765/healthz
-sudo journalctl -u sntalkbot-web-manager -n 100 --no-pager
+sudo journalctl -u sntalkbot-web-guardian -u sntalkbot-web-manager -n 100 --no-pager
 ```
 
 ถ้า localhost ใช้ได้แต่ domain ไม่ได้ ปัญหาอยู่ฝั่ง Reverse Proxy/DNS/SSL มากกว่า Web Manager

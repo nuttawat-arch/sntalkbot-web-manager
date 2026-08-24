@@ -22,6 +22,10 @@ configtpl=(root/'templates/config.html').read_text(encoding='utf-8')
 storage=(root/'webmanager/storage.py').read_text(encoding='utf-8')
 password_tool=(root/'webmanager/password_tool.py').read_text(encoding='utf-8')
 js=(root/'static/app.js').read_text(encoding='utf-8')
+help_tpl=(root/'templates/help.html').read_text(encoding='utf-8')
+dash_tpl=(root/'templates/dashboard.html').read_text(encoding='utf-8')
+system_tpl=(root/'templates/system.html').read_text(encoding='utf-8')
+guardian=(root/'guardian/snweb_guardian.py').read_text(encoding='utf-8')
 
 mainmod=(root/'webmanager/__main__.py').read_text(encoding='utf-8')
 nginx=(root/'nginx.example.conf').read_text(encoding='utf-8')
@@ -32,8 +36,8 @@ checks={
  'csrf':'check_csrf' in app,
  'three roles':all(x in app for x in ('"full"','"player"','"manager"')),
  'all 22 TTUHelper commands documented':all(('`'+x+'`') in mapping for x in expected),
- 'delete confirmation': 'confirm_name' in app and 'Type the exact instance name' not in app and 'พิมพ์ <strong>{{ bot.name }}</strong>' in insttpl,
- 'runtime HTTP API preferred with JSON fallback':'bot_api_status(path) or runtime_state(path)' in app,
+ 'delete confirmation on detail + dashboard': 'confirm_name' in app and 'พิมพ์ <strong>{{ bot.name }}</strong>' in insttpl and 'ลบ instance นี้' in dash_tpl and 'confirm_name' in dash_tpl,
+ 'runtime HTTP API preferred with JSON fallback only while running':'bot_api_status(path) or runtime_state(path)' in app and 'if not running:' in app and 'Never surface a recent runtime_status.json snapshot after the container' in app,
  'API uses loopback Bearer token':'http://127.0.0.1:{port}/v1/status' in app and 'Authorization' in app and 'Bearer {token}' in app,
  'multi-user database':'Store(DB_FILE)' in app and 'instance_owners' in storage,
  'first user becomes one atomic superadmin':'create_first_superadmin' in app and 'BEGIN IMMEDIATE' in storage and 'setup_required()' in app,
@@ -49,13 +53,15 @@ checks={
  'persistent sessions':'10 * 365 * 24 * 3600' in app,
  'login throttling':'LOGIN_MAX_FAILURES = 8' in app and 'login_blocked' in app,
  'realtime jobs':'StreamingResponse' in app and '/jobs/{jid}/stream' in app and 'EventSource' in js and 'data-job-id' in jobtpl,
- 'realtime instance SSE':'/instances/{name}/live' in app and 'await asyncio.sleep(0.5)' in app and 'live-instance' in insttpl,
+ 'realtime instance SSE':'/instances/{name}/live' in app and 'await asyncio.sleep(0.5)' in app and 'live-instance' in insttpl and 'container_running' in app and 'บอตหยุดอยู่ — ไม่มีข้อมูลสด' in js,
+ 'room/server realtime fields rendered':'room_users_online' in app and 'server_users_online' in app and 'live-room-users' in insttpl and 'live-server-users' in insttpl and 'admins_in_room_count' in app,
  'service does not run as root':'User=$SERVICE_USER' in installer and 'SERVICE_USER="${SNWEB_SERVICE_USER:-sntalkweb}"' in installer,
  'installer explicitly creates same-name service group':'groupadd --system "$SERVICE_USER"' in installer and 'useradd --system --gid "$SERVICE_USER"' in installer,
  'installer preserves existing environment settings on upgrade':'Keeping existing Web Manager settings; adding only missing defaults.' in installer and 'write_default SNWEB_COOKIE_SECURE' in installer,
- 'manual/bootstrap installer restarts already-active service and verifies deployed version':'systemctl restart sntalkbot-web-manager' in installer and 'EXPECTED_VERSION=' in installer and 'health reports version $EXPECTED_VERSION' in installer and 'enable --now sntalkbot-web-manager' not in installer,
- 'self-update installer can defer restart safely':'SNWEB_DEFER_RESTART' in installer and 'restart deferred to the self-update controller' in installer,
- 'self-update uses fresh staged checkout, rollback and scheduled restart':'replace_from_fresh_clone' in bridge and 'rollback_source_replace' in bridge and 'git","clone","--depth","1"' in bridge and 'SNWEB_DEFER_RESTART=1' in bridge and 'systemd-run' in bridge and '--on-active=2s' in bridge,
+ 'manual/bootstrap installer converges Guardian + backend and verifies deployed version':'GUARDIAN_SERVICE="sntalkbot-web-guardian"' in installer and 'SNWEB_APP_PORT' in installer and 'app_health_url' in installer and 'Guardian is stable' in installer and 'enable --now sntalkbot-web-manager' not in installer,
+ 'routine Web Manager update keeps stable Guardian binary/unit unchanged':'if [[ ! -f "$GUARDIAN_SCRIPT" ]]' in installer and 'Keeping existing stable Web Guardian unchanged.' in installer and 'if [[ ! -f /etc/systemd/system/${GUARDIAN_SERVICE}.service ]]' in installer and 'Keeping existing stable Web Guardian systemd unit unchanged.' in installer and '${GUARDIAN_SCRIPT}.new' not in installer,
+ 'self-update installer can defer backend restart safely':'SNWEB_DEFER_RESTART' in installer and 'Guardian remains online' in installer and 'First Guardian transition scheduled' in installer,
+ 'self-update uses fresh staged checkout, rollback and scheduled backend restart':'replace_from_fresh_clone' in bridge and 'rollback_source_replace' in bridge and 'git","clone","--depth","1"' in bridge and 'SNWEB_DEFER_RESTART=1' in bridge and 'systemd-run' in bridge and '--on-active=2s' in bridge and 'GUARDIAN_TRANSITION_MARKER' in bridge,
  'privileged bridge is only sudo target':'NOPASSWD: $ROOT_BRIDGE *' in installer and 'snweb-root' in installer,
  'root bridge allowlist':'action not allowed' in bridge and 'migrate-ttmediabot' in bridge and 'install-stack' in bridge and 'bot-config-template' in bridge and 'bot-image-version' in bridge and 'container-name-check' in bridge,
  'Docker tenant isolation':'managed_container_json' in bridge and 'refusing unmanaged Docker container' in bridge and 'com.ttutilities.helper' in bridge and 'com.ttutilities.data' in bridge,
@@ -69,8 +75,10 @@ checks={
  'migration template comes from Docker image':'TemporaryDirectory(prefix="snweb-migrate-")' in bridge and 'template.write_text(image_text("/app/config_default.ini")' in bridge,
  'CloudPanel loopback default':'BIND="${SNWEB_BIND:-127.0.0.1}"' in installer and 'PORT="${SNWEB_PORT:-28765}"' in installer,
  'normal-user nav hides privileged pages':"{% if user.role == 'superadmin' %}" in base and '/users' in base and '/system' in base,
- 'admin list excludes bot explained':'ไม่รวมบัญชีของบอตเอง' in insttpl,
- 'consistent 28765 safe bind defaults':'28765' in mainmod and "'127.0.0.1'" in mainmod and '127.0.0.1:28765' in nginx and "'8765'" not in mainmod and ':8765' not in nginx,
+ 'admin list excludes bot explained':'ไม่รวมบัญชีของบอตเอง' in insttpl and 'User ID และ username' in help_tpl,
+ 'guide matches API range and command counts':'20000–27999' in help_tpl and '20000–29999' not in help_tpl and '124 canonical commands' in help_tpl and '22 commands' in help_tpl,
+ 'guardian architecture documented':'Web Guardian' in help_tpl and '28765' in help_tpl and '28766' in help_tpl and 'Guardian' in system_tpl,
+ 'stable 28765 Guardian + private 28766 backend defaults':'28766' in mainmod and "'127.0.0.1'" in mainmod and '127.0.0.1:28765' in nginx and 'PUBLIC_PORT' in guardian and 'BACKEND_PORT' in guardian and "'8765'" not in mainmod and ':8765' not in nginx,
  'reverse proxy guide covers standalone and common proxies':all(x in proxyguide for x in ('Standalone','CloudPanel','NGINX','Caddy','Apache','proxy_buffering off','SNWEB_COOKIE_SECURE')),
 }
 for name,ok in checks.items(): need(ok,name)
@@ -223,6 +231,11 @@ expected=[
 flat=[c[1] for c in calls if c[0]=='stream']+[c[1] for c in calls if c[0]=='root']
 for want in expected:
     assert any(tuple(row[:len(want)])==want for row in flat), (want,flat)
+# A stopped container must never surface a fresh-looking runtime_status fallback.
+(mod.bots_root()/'actionbot'/'runtime_status.json').write_text('{"updated_epoch":9999999999,"users_online":99,"player":{"title":"stale"}}')
+rows=mod.list_instances(); assert next(x for x in rows if x['name']=='actionbot')['runtime'] is None
+# Dashboard exposes a separate confirmed delete group instead of hiding delete only on the detail page.
+r=client.get('/'); assert r.status_code==200 and 'ลบ instance นี้' in r.text and 'confirm_name' in r.text
 # Delete last; ownership must be removed only after the job action is queued/executed.
 r=client.post('/instances/actionbot/action',data={'csrf':csrf,'action':'delete','confirm_name':'actionbot'},follow_redirects=False); assert r.status_code==303
 jid=r.headers['location'].rsplit('/',1)[-1]
@@ -265,6 +278,66 @@ try:
         rb.run=old_run
 except Exception as exc:
     need(False,f'functional staged source updater: {exc!r}')
+
+# Guardian runtime regression: backend downtime must yield a maintenance response, not a raw proxy 502; once backend returns the same stable socket proxies again. POST bodies and SSE must pass through without buffering.
+try:
+    import socket, urllib.request, urllib.error
+    def free_port():
+        sock=socket.socket(); sock.bind(('127.0.0.1',0)); port=sock.getsockname()[1]; sock.close(); return port
+    public_port=free_port(); backend_port=free_port()
+    env=os.environ.copy(); env.update({'SNWEB_BIND':'127.0.0.1','SNWEB_PORT':str(public_port),'SNWEB_APP_BIND':'127.0.0.1','SNWEB_APP_PORT':str(backend_port)})
+    gp=subprocess.Popen([sys.executable,str(root/'guardian/snweb_guardian.py')],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    try:
+        for _ in range(30):
+            try:
+                urllib.request.urlopen(f'http://127.0.0.1:{public_port}/guardian-healthz',timeout=.2); break
+            except Exception: time.sleep(.05)
+        try:
+            urllib.request.urlopen(f'http://127.0.0.1:{public_port}/',timeout=1); raise AssertionError('maintenance unexpectedly returned success')
+        except urllib.error.HTTPError as exc:
+            body=exc.read().decode('utf-8','replace'); assert exc.code==503 and 'กำลังเริ่มหรืออัปเดตบริการเว็บ' in body
+        backend_code = '''from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+import sys,time
+class H(BaseHTTPRequestHandler):
+    protocol_version="HTTP/1.1"
+    def log_message(self,*a): pass
+    def do_GET(self):
+        if self.path=="/events":
+            self.send_response(200); self.send_header("Content-Type","text/event-stream"); self.send_header("Cache-Control","no-cache"); self.end_headers()
+            self.wfile.write(b"data: first\\n\\n"); self.wfile.flush(); time.sleep(1.5)
+            self.wfile.write(b"data: second\\n\\n"); self.wfile.flush(); return
+        body=(b'{"ok":true,"version":"test"}' if self.path=="/healthz" else b"backend-ok")
+        self.send_response(200); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
+    def do_POST(self):
+        n=int(self.headers.get("Content-Length") or 0); body=self.rfile.read(n)
+        out=b"post:"+body
+        self.send_response(200); self.send_header("Content-Length",str(len(out))); self.end_headers(); self.wfile.write(out)
+ThreadingHTTPServer(("127.0.0.1",int(sys.argv[1])),H).serve_forever()
+'''
+        bp=subprocess.Popen([sys.executable,'-c',backend_code,str(backend_port)])
+        try:
+            for _ in range(30):
+                try:
+                    with urllib.request.urlopen(f'http://127.0.0.1:{public_port}/healthz',timeout=.3) as resp: payload=resp.read().decode()
+                    if '"version":"test"' in payload: break
+                except Exception: time.sleep(.05)
+            else: raise AssertionError('guardian never reconnected to backend')
+            req=urllib.request.Request(f'http://127.0.0.1:{public_port}/echo',data=b'action=doctor',method='POST')
+            with urllib.request.urlopen(req,timeout=2) as resp:
+                assert resp.read()==b'post:action=doctor'
+            started=time.monotonic()
+            with urllib.request.urlopen(f'http://127.0.0.1:{public_port}/events',timeout=3) as resp:
+                first=resp.readline()+resp.readline()
+                elapsed=time.monotonic()-started
+                assert b'data: first' in first, first
+                assert elapsed < 1.2, f'first SSE event buffered for {elapsed:.2f}s'
+        finally:
+            bp.terminate(); bp.wait(timeout=5)
+        need(True,'Guardian keeps the public socket, proxies forms and streams SSE without raw 502/buffering while FastAPI restarts')
+    finally:
+        gp.terminate(); gp.wait(timeout=5)
+except Exception as exc:
+    need(False,f'Guardian runtime test: {exc!r}')
 
 try:
     with tempfile.TemporaryDirectory() as td:
