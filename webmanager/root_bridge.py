@@ -169,11 +169,14 @@ def rollback_source_replace(target, backup):
         print(f"[ROLLBACK] Restored previous source: {target}", file=sys.stderr, flush=True)
 
 
-def install_fresh_checkout(repo, target, *, project_name):
+def install_fresh_checkout(repo, target, *, project_name, defer_restart=False):
     target=Path(target)
     backup=replace_from_fresh_clone(repo, target)
     installer=target/"install.sh"
-    rc=run(["bash",installer], cwd=target, check=False)
+    argv=["bash",installer]
+    if defer_restart:
+        argv=["env","SNWEB_DEFER_RESTART=1",*argv]
+    rc=run(argv, cwd=target, check=False)
     if rc:
         print(f"[FAIL] {project_name} installer returned {rc}; restoring previous source", file=sys.stderr, flush=True)
         rollback_source_replace(target, backup)
@@ -183,6 +186,10 @@ def install_fresh_checkout(repo, target, *, project_name):
         restored=target/"install.sh"
         if restored.is_file():
             run(["bash",restored], cwd=target, check=False)
+        if project_name == "Web Manager":
+            # The restored source may be 1.1.3 or older, whose installer did not
+            # restart an already-active service.  Restore the running process too.
+            run(["systemctl","restart","sntalkbot-web-manager"], check=False)
         raise SystemExit(rc)
     _prune_source_backups(target)
     return 0
@@ -315,7 +322,7 @@ def main():
         return install_fresh_checkout(cfg["SNWEB_TTU_REPO"], cfg["SNWEB_TTU_SOURCE"], project_name="TTUHelper")
     if action=="update-web":
         target=Path(cfg["SNWEB_INSTALL_DIR"])
-        install_fresh_checkout(cfg["SNWEB_WEB_REPO"], target, project_name="Web Manager")
+        install_fresh_checkout(cfg["SNWEB_WEB_REPO"], target, project_name="Web Manager", defer_restart=True)
         # Restart from a separate transient systemd unit after this privileged
         # helper exits; restarting directly here can kill the caller's cgroup
         # before the web job receives its success output.

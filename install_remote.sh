@@ -47,6 +47,9 @@ else
   if ((had_previous)) && [[ -e "$BACKUP" || -L "$BACKUP" ]]; then
     mv -- "$BACKUP" "$TARGET"
     bash "$TARGET/install.sh" || true
+    # The restored installer can itself be an older release that only used
+    # `systemctl enable --now`; force-reload the restored source explicitly.
+    systemctl restart sntalkbot-web-manager || true
   fi
   exit "$rc"
 fi

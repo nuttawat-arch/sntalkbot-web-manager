@@ -153,8 +153,49 @@ PrivateTmp=true
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl enable --now sntalkbot-web-manager
-sleep 1
+systemctl enable sntalkbot-web-manager >/dev/null
+
+EXPECTED_VERSION="$(tr -d '\r\n' < "$TARGET/VERSION")"
+health_host="$BIND"
+case "$health_host" in
+  0.0.0.0|::|\[::\]|"") health_host="127.0.0.1" ;;
+esac
+health_url="http://${health_host}:${PORT}/healthz"
+
+if [[ "${SNWEB_DEFER_RESTART:-0}" == "1" ]]; then
+  # Self-update is invoked by the running Web Manager itself.  Restarting here
+  # would kill the caller before the job can report success, so root_bridge.py
+  # schedules the restart from a separate transient systemd unit after exit.
+  echo "[INFO] Web Manager restart deferred to the self-update controller."
+  if ! systemctl is-active --quiet sntalkbot-web-manager; then
+    systemctl start sntalkbot-web-manager
+  fi
+else
+  # Manual/ZIP/bootstrap upgrades must reload the new source immediately.
+  # `enable --now` alone does not restart an already-active service.
+  systemctl restart sntalkbot-web-manager
+  ok=0
+  health=""
+  for _ in {1..20}; do
+    if systemctl is-active --quiet sntalkbot-web-manager; then
+      health="$(curl -fsS "$health_url" 2>/dev/null || true)"
+      if [[ "$health" == *"\"version\":\"${EXPECTED_VERSION}\""* || "$health" == *"\"version\": \"${EXPECTED_VERSION}\""* ]]; then
+        ok=1
+        break
+      fi
+    fi
+    sleep 0.5
+  done
+  if (( ! ok )); then
+    echo "[FAIL] Web Manager did not come back on $health_url with expected version $EXPECTED_VERSION." >&2
+    [[ -n "$health" ]] && echo "Last health response: $health" >&2
+    systemctl --no-pager --full status sntalkbot-web-manager >&2 || true
+    journalctl -u sntalkbot-web-manager -n 40 --no-pager >&2 || true
+    exit 1
+  fi
+  echo "[OK] Web Manager restarted and health reports version $EXPECTED_VERSION."
+fi
+
 systemctl --no-pager --full status sntalkbot-web-manager | sed -n '1,18p' || true
 
 echo

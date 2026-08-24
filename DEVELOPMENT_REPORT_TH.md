@@ -1,3 +1,24 @@
+# DEVELOPMENT REPORT — SNTalkBot Web Manager 1.1.4
+
+## ปัญหาที่พบจาก production 1.1.3
+- bootstrap ดาวน์โหลด/ตรวจ SHA และ backup/replace source สำเร็จ; `/opt/sntalkbot-web-manager/VERSION` เป็น 1.1.3
+- แต่ systemd process ยังเป็น process เดิมจาก 1.1.1 และ `/healthz` ยังรายงาน 1.1.1 เพราะ `systemctl enable --now` ไม่ restart service ที่ active อยู่
+
+## สิ่งที่แก้
+- manual/ZIP/bootstrap installer restart service จริงและ gate ความสำเร็จด้วย health version เทียบกับ `VERSION`
+- self-update จากหน้าเว็บ defer restart เพื่อรักษา job response แล้วใช้ transient systemd restart ตามเดิม
+- ถ้า version หลัง restart ไม่ตรง installer จะ fail; bootstrap staged updater สามารถ rollback source รุ่นเดิมได้
+
+## ผลตรวจ
+- Python/Bash/LF validator ผ่าน
+- action matrix/security tests เดิมยังอยู่ครบ
+- validator เพิ่ม invariant ห้ามกลับไปใช้ `enable --now` เป็นตัวแทนของ restart และบังคับมี version-aware health verification
+
+## สถานะ
+- พร้อม publish 1.1.4; production ต้องอัปเดตแล้วตรวจ `cat VERSION` และ `/healthz` ให้เป็น 1.1.4 ตรงกัน
+
+---
+
 # DEVELOPMENT REPORT — SNTalkBot Web Manager 1.1.3
 
 วันที่: 2026-08-25

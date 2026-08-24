@@ -1,3 +1,10 @@
+# SNTalkBot Web Manager 1.1.4
+
+- แก้ upgrade จาก ZIP/bootstrap ที่ source เปลี่ยนเป็นรุ่นใหม่แล้วแต่ process เก่ายังทำงานอยู่ เพราะ `systemctl enable --now` ไม่ restart service ที่ active อยู่
+- การติดตั้ง/อัปเดตจาก SSH/ZIP/bootstrap จะ `systemctl restart` จริง แล้วตรวจ `/healthz` จน version ตรงกับไฟล์ `VERSION`; ถ้าไม่ตรงให้ installer ล้มเพื่อเปิดทางให้ rollback คืน source รุ่นเดิม
+- Self-update จากหน้า Web Manager ใช้ `SNWEB_DEFER_RESTART=1` เพื่อไม่ฆ่า request ตัวเอง และยัง schedule restart ผ่าน transient systemd unit หลัง privileged updater จบ
+- คง staged source backup/rollback, persistent config/database และ Docker ownership safety จาก 1.1.3 ครบ
+
 # SNTalkBot Web Manager 1.1.3
 
 ## การเปลี่ยนแปลง
