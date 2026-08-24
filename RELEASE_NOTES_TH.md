@@ -1,3 +1,24 @@
+# SNTalkBot Web Manager 1.1.1
+
+## การเปลี่ยนแปลง
+
+- แก้ architecture mismatch จาก 1.1.0 ที่ยังคาดว่ามี SNTalkBot source ที่ `/opt/sntalkbot` ทั้งที่ production จริง deploy SNTalkBot ผ่าน Docker image และเก็บ instance ที่ `/opt/sntalkbot-bots/`
+- การสร้าง instance อ่าน `config_default.ini` จาก Docker image โดยตรงผ่าน privileged bridge แบบ allowlist
+- Migration TTMediaBot ใช้ template ชั่วคราวที่อ่านจาก Docker image จึงไม่ต้อง clone source บอตลง host
+- Core Stack ติดตั้ง/ซ่อมเฉพาะ TTUHelper แล้วให้ TTUHelper pull SNTalkBot image; ตัดปุ่ม/งาน `update SNTalkBot source` ที่ไม่ตรง production architecture
+- หน้า System แสดงเวอร์ชัน SNTalkBot จาก image และ digest local/remote แทน host source version
+- รักษา reverse proxy `127.0.0.1:28765`, multi-user ownership, FastAPI/TestClient, root-bridge allowlist และ persistent settings เดิม
+
+## ปัญหาที่ตรวจพบจากรุ่นก่อน
+
+- validator 1.1.0 ผ่าน functional/security tests แต่ยังยอมรับ `/opt/sntalkbot` เป็น dependency จึงไม่ตรวจเจอว่า production host ของผู้พัฒนาไม่มี source path นี้
+
+## สถานะการตรวจ
+
+- ต้องผ่าน Python compile, TestClient, root-bridge allowlist, Bash syntax, LF-only Linux files และ source-less Docker template regression ก่อน publish
+
+---
+
 # SNTalkBot Web Manager 1.1.0
 
 ## สิ่งที่ผู้ใช้ควรรู้

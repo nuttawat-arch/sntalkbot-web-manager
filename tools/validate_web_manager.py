@@ -55,8 +55,11 @@ checks={
  'installer preserves existing environment settings on upgrade':'Keeping existing Web Manager settings; adding only missing defaults.' in installer and 'write_default SNWEB_COOKIE_SECURE' in installer,
  'self-update reruns upgrade-safe installer then schedules restart':'run(["bash",installer],cwd=target)' in bridge and 'systemd-run' in bridge and '--on-active=2s' in bridge,
  'privileged bridge is only sudo target':'NOPASSWD: $ROOT_BRIDGE *' in installer and 'snweb-root' in installer,
- 'root bridge allowlist':'action not allowed' in bridge and 'migrate-ttmediabot' in bridge and 'install-stack' in bridge,
+ 'root bridge allowlist':'action not allowed' in bridge and 'migrate-ttmediabot' in bridge and 'install-stack' in bridge and 'bot-config-template' in bridge and 'bot-image-version' in bridge,
  'installer preflight':all(x in installer for x in ('has python3','has git','has curl','if has docker')),
+ 'production does not require /opt/sntalkbot source':'SNWEB_BOT_SOURCE' not in app and 'SNWEB_BOT_SOURCE' not in bridge and 'SNWEB_BOT_SOURCE' not in installer and 'update-bot-source' not in app and 'update-bot-source' not in bridge,
+ 'config template comes from Docker image':'bot-config-template' in app and 'image_text("/app/config_default.ini")' in bridge and '["docker","run","--rm","--entrypoint","cat",image_name(),path]' in bridge,
+ 'migration template comes from Docker image':'TemporaryDirectory(prefix="snweb-migrate-")' in bridge and 'template.write_text(image_text("/app/config_default.ini")' in bridge,
  'CloudPanel loopback default':'BIND="${SNWEB_BIND:-127.0.0.1}"' in installer and 'PORT="${SNWEB_PORT:-28765}"' in installer,
  'normal-user nav hides privileged pages':"{% if user.role == 'superadmin' %}" in base and '/users' in base and '/system' in base,
  'admin list excludes bot explained':'ไม่รวมบัญชีของบอตเอง' in insttpl,
@@ -68,6 +71,14 @@ for name,ok in checks.items(): need(ok,name)
 need('subprocess.run([str(x) for x in args]' in bridge and 'os.system' not in bridge and 'subprocess.Popen' not in bridge, 'root bridge executes only structured allowlisted argv actions')
 # Shell syntax
 need(subprocess.run(['bash','-n',str(root/'install.sh')],capture_output=True).returncode==0,'installer shell syntax valid')
+need(subprocess.run(['bash','-n',str(root/'install_remote.sh')],capture_output=True).returncode==0,'remote installer shell syntax valid')
+crlf=[]
+for path in root.rglob('*'):
+    if not path.is_file() or '.git' in path.parts or '__pycache__' in path.parts or '.venv' in path.parts: continue
+    if path.suffix.lower() not in {'.py','.sh','.html','.js','.css','.md','.txt'} and path.name not in {'VERSION','.gitattributes'}: continue
+    if b'\r\n' in path.read_bytes(): crlf.append(str(path.relative_to(root)))
+need(not crlf, 'Linux/Web Manager source line endings are LF-only')
+if crlf: print('CRLF files: '+', '.join(crlf[:12]))
 # Functional tenant/auth test with isolated data/root. No host Docker/TTUHelper action is invoked.
 try:
     with tempfile.TemporaryDirectory() as td:
@@ -75,7 +86,7 @@ try:
         etc.write_text(f'TTU_BOTS_ROOT="{bots}"\nTTU_IMAGE_REPO="example/bot"\nTTU_TAG="latest"\n')
         env=os.environ.copy(); env.update({
             'SNWEB_DATA_DIR':str(t/'data'),'SNWEB_DB_FILE':str(t/'data/db.sqlite'),'SNWEB_SESSION_SECRET_FILE':str(secret),
-            'TTU_HELPER_CONFIG':str(etc),'SNWEB_ROOT_BRIDGE':'/bin/false','SNWEB_BOT_SOURCE':str(t/'source'),
+            'TTU_HELPER_CONFIG':str(etc),'SNWEB_ROOT_BRIDGE':'/bin/false',
         })
         test_code = """
 from pathlib import Path

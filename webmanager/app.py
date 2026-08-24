@@ -36,9 +36,7 @@ ROOT_BRIDGE = Path(os.getenv("SNWEB_ROOT_BRIDGE", "/usr/local/lib/sntalkbot-web-
 TTU_CONFIG = Path(os.getenv("TTU_HELPER_CONFIG", "/etc/default/ttuhelper"))
 DEFAULT_BOTS_ROOT = Path("/opt/sntalkbot-bots")
 TTU_SOURCE = Path(os.getenv("SNWEB_TTU_SOURCE", "/opt/ttuhelper"))
-BOT_SOURCE = Path(os.getenv("SNWEB_BOT_SOURCE", "/opt/sntalkbot"))
 TTU_REPO = os.getenv("SNWEB_TTU_REPO", "https://github.com/nuttawat-arch/ttuhelper.git")
-BOT_REPO = os.getenv("SNWEB_BOT_REPO", "https://github.com/nuttawat-arch/sntalkbot.git")
 WEB_REPO = os.getenv("SNWEB_WEB_REPO", "https://github.com/nuttawat-arch/sntalkbot-web-manager.git")
 IMAGE_REPO_DEFAULT = os.getenv("TTU_IMAGE_REPO", "nuttawat0295/sntalkbot")
 IMAGE_TAG_DEFAULT = os.getenv("TTU_TAG", "latest")
@@ -539,11 +537,6 @@ def job_update_helper():
     stream_root(["update-helper"], timeout=1800)
 
 
-def job_update_bot_source():
-    job_emit("Updating SNTalkBot source from configured official repository")
-    stream_root(["update-bot-source"], timeout=900)
-
-
 def job_update_web():
     job_emit("Updating Web Manager; the web service will restart at the end")
     stream_root(["update-web"], timeout=1200)
@@ -563,10 +556,20 @@ def job_helper_action(action, name=None):
 
 
 def get_config_template():
-    p = BOT_SOURCE / "config_default.ini"
-    if p.is_file():
-        return p.read_text(encoding="utf-8")
-    raise RuntimeError("ไม่พบ /opt/sntalkbot/config_default.ini กรุณาใช้หน้า ระบบ → ติดตั้ง/ซ่อม Core Stack ก่อน")
+    rc, out = root_run(["bot-config-template"], timeout=60)
+    if rc == 0 and "[server]" in out and "[bot]" in out:
+        return out
+    raise RuntimeError("ไม่สามารถอ่าน config_default.ini จาก SNTalkBot Docker image ได้ กรุณา Pull image แล้วลองใหม่")
+
+
+def bot_image_version():
+    if not docker_installed():
+        return None
+    rc, out = root_run(["bot-image-version"], timeout=60)
+    if rc != 0:
+        return None
+    value = out.strip().splitlines()[-1] if out.strip() else ""
+    return value if re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", value) else None
 
 
 def create_instance(values: dict):
@@ -760,20 +763,17 @@ def system_status(include_remote=False):
         "helper_version": helper_version(),
         "helper_remote": None,
         "web_remote": None,
-        "bot_source_version": source_version(BOT_SOURCE),
-        "bot_remote": None,
+        "bot_image_version": bot_image_version(),
         "docker_installed": docker_installed(),
         "image": f"{settings['TTU_IMAGE_REPO']}:{settings['TTU_TAG']}",
         "local_image_digest": local_image_digest(),
         "remote_image_digest": None,
         "bots_root": settings["TTU_BOTS_ROOT"],
-        "bot_source": str(BOT_SOURCE),
         "helper_source": str(TTU_SOURCE),
     }
     if include_remote:
         data["web_remote"] = remote_version(WEB_REPO)
         data["helper_remote"] = remote_version(TTU_REPO)
-        data["bot_remote"] = remote_version(BOT_REPO)
         data["remote_image_digest"] = remote_image_digest()
     return data
 
@@ -925,7 +925,6 @@ async def system_action(request: Request, action: str = Form(...), csrf: str = F
     mapping = {
         "install-stack": ("ติดตั้ง/ตรวจ Core Stack", job_install_stack, ()),
         "update-helper": ("อัปเดต TTUHelper", job_update_helper, ()),
-        "update-bot-source": ("อัปเดต SNTalkBot source", job_update_bot_source, ()),
         "update-web": ("อัปเดต Web Manager", job_update_web, ()),
         "pull-image": ("ดาวน์โหลด SNTalkBot image", job_helper_action, ("pull",)),
         "update-running": ("อัปเดต SNTalkBot ที่กำลังรัน", job_helper_action, ("update",)),

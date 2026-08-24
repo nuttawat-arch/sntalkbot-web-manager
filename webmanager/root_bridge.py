@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
@@ -17,10 +18,8 @@ CONFIG = Path("/etc/default/sntalkbot-web-manager")
 def settings():
     data = {
         "SNWEB_TTU_SOURCE": "/opt/ttuhelper",
-        "SNWEB_BOT_SOURCE": "/opt/sntalkbot",
         "SNWEB_INSTALL_DIR": "/opt/sntalkbot-web-manager",
         "SNWEB_TTU_REPO": "https://github.com/nuttawat-arch/ttuhelper.git",
-        "SNWEB_BOT_REPO": "https://github.com/nuttawat-arch/sntalkbot.git",
         "SNWEB_WEB_REPO": "https://github.com/nuttawat-arch/sntalkbot-web-manager.git",
     }
     if CONFIG.is_file():
@@ -47,6 +46,31 @@ def run(args, cwd=None, check=True):
     if check and p.returncode:
         raise SystemExit(p.returncode)
     return p.returncode
+
+
+def capture(args, cwd=None):
+    p=subprocess.run(
+        [str(x) for x in args], cwd=str(cwd) if cwd else None, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+    )
+    if p.returncode:
+        if p.stderr:
+            print(p.stderr, file=sys.stderr, end="" if p.stderr.endswith("\n") else "\n")
+        raise SystemExit(p.returncode)
+    return p.stdout
+
+
+def image_name():
+    helper=helper_settings()
+    return f"{helper['TTU_IMAGE_REPO']}:{helper['TTU_TAG']}"
+
+
+def image_text(path):
+    # Only fixed in-image files used by Web Manager are accepted; callers cannot
+    # turn this into a generic Docker read primitive.
+    if path not in {"/app/config_default.ini", "/app/VERSION"}:
+        raise SystemExit("image file is not allowed")
+    return capture(["docker","run","--rm","--entrypoint","cat",image_name(),path])
 
 
 def valid_name(name):
@@ -85,7 +109,8 @@ def install_stack(cfg):
         print("[OK] Docker command already installed", flush=True)
     else:
         print("[MISSING] Docker; TTUHelper installer will install it", flush=True)
-    clone_or_update(cfg["SNWEB_BOT_REPO"], cfg["SNWEB_BOT_SOURCE"])
+    # SNTalkBot itself is deployed as a Docker image.  Do not create a host-side
+    # /opt/sntalkbot source checkout just to satisfy Web Manager.
     clone_or_update(cfg["SNWEB_TTU_REPO"], cfg["SNWEB_TTU_SOURCE"])
     run(["bash", Path(cfg["SNWEB_TTU_SOURCE"])/"install.sh"], cwd=cfg["SNWEB_TTU_SOURCE"])
     run(["ttuhelper","doctor"])
@@ -110,15 +135,16 @@ def migrate_ttmediabot(cfg, args):
     dest.mkdir(parents=True,exist_ok=True)
     migrator=Path("/usr/local/lib/ttuhelper/migrate_ttmediabot.py")
     if not migrator.is_file(): migrator=Path(cfg["SNWEB_TTU_SOURCE"])/"tools"/"migrate_ttmediabot.py"
-    template=Path(cfg["SNWEB_BOT_SOURCE"])/"config_default.ini"
     if not migrator.is_file(): raise SystemExit("TTMediaBot migrator is not installed")
-    if not template.is_file(): raise SystemExit("SNTalkBot config_default.ini is not installed")
     names.parent.mkdir(parents=True,exist_ok=True)
-    cmd=["python3",migrator,"--source",source,"--dest-root",dest,"--template",template,"--mode",role,"--yes","--names-file",names]
-    if replace: cmd.append("--replace")
-    if dry_run: cmd.append("--dry-run")
-    rc=run(cmd,check=False)
-    if rc: return rc
+    with tempfile.TemporaryDirectory(prefix="snweb-migrate-") as temp_dir:
+        template=Path(temp_dir)/"config_default.ini"
+        template.write_text(image_text("/app/config_default.ini"),encoding="utf-8")
+        cmd=["python3",migrator,"--source",source,"--dest-root",dest,"--template",template,"--mode",role,"--yes","--names-file",names]
+        if replace: cmd.append("--replace")
+        if dry_run: cmd.append("--dry-run")
+        rc=run(cmd,check=False)
+        if rc: return rc
     if not dry_run and names.is_file():
         for name in names.read_text(encoding="utf-8",errors="replace").splitlines():
             name=name.strip()
@@ -180,10 +206,15 @@ def main():
         if len(args)!=1 or not re.fullmatch(r"[A-Za-z0-9._/:@-]+",args[0]): raise SystemExit("bad image")
         return run(["docker","buildx","imagetools","inspect",args[0]], check=False)
     if action=="migrate-ttmediabot": return migrate_ttmediabot(cfg,args)
+    if action=="bot-config-template":
+        if args: raise SystemExit("unexpected arguments")
+        sys.stdout.write(image_text("/app/config_default.ini")); return 0
+    if action=="bot-image-version":
+        if args: raise SystemExit("unexpected arguments")
+        sys.stdout.write(image_text("/app/VERSION").strip()+"\n"); return 0
     if action=="install-stack": return install_stack(cfg)
     if action=="update-helper":
         clone_or_update(cfg["SNWEB_TTU_REPO"],cfg["SNWEB_TTU_SOURCE"]); return run(["bash",Path(cfg["SNWEB_TTU_SOURCE"])/"install.sh"],cwd=cfg["SNWEB_TTU_SOURCE"])
-    if action=="update-bot-source": return clone_or_update(cfg["SNWEB_BOT_REPO"],cfg["SNWEB_BOT_SOURCE"])
     if action=="update-web":
         clone_or_update(cfg["SNWEB_WEB_REPO"],cfg["SNWEB_INSTALL_DIR"])
         target=Path(cfg["SNWEB_INSTALL_DIR"])

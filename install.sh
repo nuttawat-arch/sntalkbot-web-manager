@@ -119,10 +119,8 @@ write_default SNWEB_ROOT_BRIDGE "$ROOT_BRIDGE"
 write_default SNWEB_COOKIE_SECURE "false"
 write_default SNWEB_FORWARDED_ALLOW_IPS "127.0.0.1"
 write_default SNWEB_TTU_SOURCE "/opt/ttuhelper"
-write_default SNWEB_BOT_SOURCE "/opt/sntalkbot"
 write_default SNWEB_INSTALL_DIR "$TARGET"
 write_default SNWEB_TTU_REPO "https://github.com/nuttawat-arch/ttuhelper.git"
-write_default SNWEB_BOT_REPO "https://github.com/nuttawat-arch/sntalkbot.git"
 write_default SNWEB_WEB_REPO "https://github.com/nuttawat-arch/sntalkbot-web-manager.git"
 # Read the effective persisted bind/port for the final status message.
 # shellcheck disable=SC1091
