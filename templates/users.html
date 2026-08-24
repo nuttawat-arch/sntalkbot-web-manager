@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block title %}บัญชีผู้ใช้{% endblock %}{% block content %}
+<h2>บัญชีผู้ใช้ Web Manager</h2>
+<p>เฉพาะ Super Admin เท่านั้นที่สร้างบัญชีใหม่ได้ ผู้ใช้ทั่วไปจัดการได้เฉพาะ instance ที่ตนเองสร้าง</p>
+<h3>สร้างบัญชีใหม่</h3>
+<form method="post" action="/users/create"><input type="hidden" name="csrf" value="{{ csrf }}">
+<label for="username">ชื่อผู้ใช้</label><input id="username" name="username" required pattern="[A-Za-z0-9][A-Za-z0-9_.-]{2,63}">
+<label for="display_name">ชื่อที่แสดง</label><input id="display_name" name="display_name">
+<label for="password">รหัสผ่านเริ่มต้น</label><input id="password" name="password" type="password" minlength="10" required autocomplete="new-password">
+<button type="submit">สร้างผู้ใช้</button></form>
+<h3>ผู้ใช้ทั้งหมด ({{ users|length }})</h3>
+{% for u in users %}<details class="bot-card"><summary><strong>{{ u.display_name or u.username }}</strong> — {{ u.username }} — {{ u.role }} — {{ 'เปิดใช้' if u.active else 'ปิดใช้' }}</summary>
+<p>สร้างเมื่อ {{ u.created_at }}</p>
+<form method="post" action="/users/{{ u.id }}/password"><input type="hidden" name="csrf" value="{{ csrf }}"><label for="pw{{ u.id }}">ตั้งรหัสผ่านใหม่</label><input id="pw{{ u.id }}" name="password" type="password" minlength="10" required autocomplete="new-password"><button type="submit">เปลี่ยนรหัสผ่าน</button></form>
+{% if u.id != current_user.id %}<form method="post" action="/users/{{ u.id }}/toggle"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">{{ 'ปิดบัญชี' if u.active else 'เปิดบัญชี' }}</button></form>{% endif %}
+</details>{% endfor %}
+{% endblock %}

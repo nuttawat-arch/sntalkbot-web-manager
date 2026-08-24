@@ -1,0 +1,12 @@
+<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ตั้งค่าครั้งแรก — SNTalkBot Web Manager</title><link rel="stylesheet" href="/static/style.css"></head><body>
+<main id="main"><h1>SNTalkBot Web Manager</h1><h2>ตั้งค่าครั้งแรก — สร้าง Super Admin</h2>
+<p>บัญชีที่สร้างจากหน้านี้เป็นผู้ดูแลสูงสุดของ Web Manager คนแรก หลังสร้างสำเร็จ หน้านี้จะปิดและบัญชีใหม่สร้างได้โดย Super Admin เท่านั้น</p>
+{% if error %}<p role="alert" class="error">{{ error }}</p>{% endif %}
+<form method="post" action="/setup">
+<label for="username">ชื่อผู้ใช้</label><input id="username" name="username" required pattern="[A-Za-z0-9][A-Za-z0-9_.-]{2,63}" autocomplete="username">
+<small>3–64 ตัว ใช้ A-Z, a-z, 0-9, จุด, ขีดกลาง หรือขีดล่าง</small>
+<label for="display_name">ชื่อที่แสดง</label><input id="display_name" name="display_name" autocomplete="name">
+<label for="password">รหัสผ่าน</label><input id="password" name="password" type="password" minlength="10" required autocomplete="new-password">
+<label for="password2">ยืนยันรหัสผ่าน</label><input id="password2" name="password2" type="password" minlength="10" required autocomplete="new-password">
+<button type="submit">สร้าง Super Admin และเข้าสู่ระบบ</button>
+</form><p>เวอร์ชัน {{ version }}</p></main></body></html>

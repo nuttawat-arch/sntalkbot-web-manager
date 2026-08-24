@@ -1,0 +1,23 @@
+{% extends "base.html" %}{% block title %}แดชบอร์ด — SNTalkBot Web Manager{% endblock %}
+{% block content %}
+<h2>ภาพรวม</h2>
+<p>TTUHelper: {{ system.helper_version or 'ยังไม่ติดตั้ง' }} | Docker: {{ 'พร้อม' if system.docker_installed else 'ยังไม่พร้อม' }} | Image: {{ system.image }}</p>
+{% if user.role == 'superadmin' and (not system.helper_installed or not system.docker_installed) %}<p class="warning">Core Stack ยังไม่พร้อม ไปที่ <a href="/system">ระบบ/อัปเดต</a> เพื่อให้เว็บตรวจและติดตั้งเฉพาะสิ่งที่ยังขาด</p>{% endif %}
+<p><a class="button" href="/instances/new">สร้างบอตใหม่</a></p>
+<h2>{% if user.role == 'superadmin' %}บอตทั้งหมด{% else %}บอตของคุณ{% endif %} ({{ instances|length }})</h2>
+{% if not instances %}<p class="welcome-empty">คุณยังไม่มีบอตของคุณเลย สร้างตัวแรกกันเถอะ — <a href="/instances/new">สร้างบอตใหม่</a></p>{% endif %}
+{% for bot in instances %}
+<details class="bot-card" {% if loop.first %}open{% endif %}>
+<summary><strong>{{ bot.name }}</strong> — {{ 'กำลังรัน' if bot.running else 'หยุดอยู่' }} — {{ bot.role }}</summary>
+{% if user.role == 'superadmin' and bot.owner %}<p>เจ้าของเว็บ: {{ bot.owner.display_name or bot.owner.username }} ({{ bot.owner.username }}){% endif %}</p>
+<p>ชื่อเล่น: {{ bot.nickname }} | Server: {{ bot.server }} | ห้องตั้งต้น: {{ bot.channel }}</p>
+{% if bot.runtime and not bot.runtime.stale %}
+<p>สดผ่าน {{ bot.runtime.transport or 'runtime bridge' }}: ห้อง {{ bot.runtime.channel.name or bot.runtime.channel.id or '-' }} | ผู้ใช้ออนไลน์ {{ bot.runtime.users_online }} | Administrator ที่ออนไลน์ {{ bot.runtime.admins_online_count or 0 }} | uptime {{ bot.runtime.uptime_seconds }} วินาที</p>
+<p>TeamTalk: กำลังพูด {{ bot.runtime.teamtalk_activity.speaking }} | media {{ bot.runtime.teamtalk_activity.media }} | video {{ bot.runtime.teamtalk_activity.video }} | desktop {{ bot.runtime.teamtalk_activity.desktop }}</p>
+{% if bot.runtime.player %}<p>Player: {{ 'กำลังเล่น' if bot.runtime.player.is_playing else 'ว่าง' }} — {{ bot.runtime.player.title or '-' }} | คิว {{ bot.runtime.player.queue_count }} | Q {{ 'ON' if bot.runtime.player.queue_mode else 'OFF' }} | M{{ bot.runtime.player.play_mode }} | Autoplay {{ 'ON' if bot.runtime.player.autoplay else 'OFF' }}</p>{% endif %}
+{% elif bot.running %}<p class="muted">ยังไม่มีข้อมูลสดจาก API/Runtime Bridge เว็บจะแสดงข้อมูล Docker/config แทน</p>{% endif %}
+<p><a href="/instances/{{ bot.name }}">เปิดรายละเอียดและการจัดการ</a> | <a href="/instances/{{ bot.name }}/logs">ดูบันทึก</a> | <a href="/instances/{{ bot.name }}/config">การตั้งค่าทั้งหมด</a></p>
+<form class="inline" method="post" action="/instances/{{ bot.name }}/action"><input type="hidden" name="csrf" value="{{ csrf }}">{% if bot.running %}<button name="action" value="restart">รีสตาร์ต</button><button name="action" value="stop">หยุด</button>{% else %}<button name="action" value="run">เริ่ม</button>{% endif %}</form>
+</details>
+{% endfor %}
+{% endblock %}

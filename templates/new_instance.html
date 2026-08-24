@@ -1,0 +1,30 @@
+{% extends "base.html" %}{% block title %}สร้างบอตใหม่{% endblock %}{% block content %}
+<h2>สร้างบอตใหม่</h2>
+<p>เว็บจะสร้าง instance จาก config จริง แล้วเริ่มบอตชั่วคราวเพื่อตรวจว่า <strong>TeamTalk username ของเจ้าของเป็น Administrator ที่ออนไลน์อยู่จริง</strong> บนเซิร์ฟเวอร์นั้น บัญชีของบอตเองจะไม่นับเป็นหลักฐาน</p>
+<form method="post" action="/instances/new">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<fieldset><legend>ประเภทบอต</legend>
+<label><input type="radio" name="role" value="full" checked> Full Bot — Player + Server Manager</label>
+<label><input type="radio" name="role" value="player"> Player Bot — เพลง/คิว/สื่อเท่านั้น</label>
+<label><input type="radio" name="role" value="manager"> Server Manager Bot — จัดการเซิร์ฟเวอร์เท่านั้น</label>
+</fieldset>
+<label for="name">ชื่อ instance</label><input id="name" name="name" required pattern="[a-z0-9][a-z0-9_.-]{0,62}" maxlength="63" aria-describedby="namehelp">
+<small id="namehelp"><strong>Linux:</strong> ใช้ตัวพิมพ์เล็ก a-z, เลข 0-9, จุด, ขีดกลาง หรือขีดล่างเท่านั้น; ขึ้นต้นด้วยตัวอักษร/เลข; สูงสุด 63 ตัว; ห้ามเว้นวรรค, slash, backslash หรืออักขระพิเศษ เพื่อให้ชื่อโฟลเดอร์, container และคำสั่งตรงกันทุกครั้ง</small>
+<label for="nickname">ชื่อเล่นของบอต</label><input id="nickname" name="nickname" value="SN TalkBot">
+<label for="status_message">สถานะบอต</label><input id="status_message" name="status_message" value="auto"><small>auto = แสดงประเภทบอตและคำแนะนำ h</small>
+<label for="hostname">TeamTalk hostname/IP</label><input id="hostname" name="hostname" required>
+<label for="tcp_port">TCP port</label><input id="tcp_port" name="tcp_port" type="number" min="1" max="65535" value="10333">
+<label for="udp_port">UDP port</label><input id="udp_port" name="udp_port" type="number" min="1" max="65535" value="10333">
+<label><input type="checkbox" name="encrypted"> เชื่อมต่อ TeamTalk แบบเข้ารหัส</label>
+<label for="owner_teamtalk_username">TeamTalk username ของคุณที่เป็น Server Administrator</label><input id="owner_teamtalk_username" name="owner_teamtalk_username" required aria-describedby="ownerhelp">
+<small id="ownerhelp">ต้องเป็นบัญชีมนุษย์ของเจ้าของ Web account นี้และต้องออนไลน์อยู่ตอนสร้าง ระบบจะตรวจจากรายชื่อ Administrator ที่บอตเห็นจริง และห้ามใช้ username เดียวกับบอต</small>
+<label for="username">TeamTalk username ของบอต (ถ้ามี)</label><input id="username" name="username">
+<label for="password">TeamTalk password ของบอต (ถ้ามี)</label><input id="password" name="password" type="password" autocomplete="new-password">
+<label for="channel">Channel path</label><input id="channel" name="channel" value="/">
+<label for="channel_password">รหัสห้อง (ถ้ามี)</label><input id="channel_password" name="channel_password" type="password">
+<label for="authorized_users">ชื่อผู้ดูแลบอตเพิ่มเติม คั่นด้วย comma</label><input id="authorized_users" name="authorized_users"><small>TeamTalk username ของเจ้าของจะถูกเพิ่มให้อัตโนมัติ</small>
+<label for="language">ภาษา</label><input id="language" name="language" value="th">
+<label><input type="checkbox" name="start_now" checked> หลังยืนยันสิทธิ์แล้วให้บอตรันต่อทันที</label>
+<button type="submit">สร้างและตรวจสิทธิ์ Administrator</button>
+</form>
+{% endblock %}

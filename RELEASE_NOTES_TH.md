@@ -1,0 +1,24 @@
+# SNTalkBot Web Manager 1.1.0
+
+## สิ่งที่ผู้ใช้ควรรู้
+
+- เพิ่มระบบหลายบัญชี: ผู้ใช้คนแรกเป็น Super Admin และ Super Admin เท่านั้นสร้าง/ปิดบัญชีหรือรีเซ็ตรหัสผ่านผู้ใช้อื่นได้
+- ผู้ใช้ทั่วไปเห็นและจัดการเฉพาะ instance ที่ตนเป็นเจ้าของ; Job, Log, Config และ action ทุกเส้นทางตรวจ ownership ฝั่ง backend
+- ตอนสร้าง instance ต้องยืนยัน TeamTalk username ของเจ้าของว่าเป็น Administrator ที่ออนไลน์อยู่จริง และไม่นับบัญชีของบอตเอง
+- เพิ่ม realtime dashboard ผ่าน SNTalkBot read-only loopback HTTP API; ถ้า API ใช้ไม่ได้จะ fallback ไป runtime_status.json
+- เพิ่ม progress แบบ realtime สำหรับงานติดตั้ง อัปเดต doctor migration และงานยาวอื่น ๆ
+- เพิ่มการลบ instance ผ่านหน้าเว็บ โดยต้องพิมพ์ชื่อยืนยันและ TTUHelper สำรองข้อมูลก่อนลบ
+- Web Manager ทำงานด้วย system user `sntalkweb`; งาน root ผ่าน privileged allowlist bridge เท่านั้น ไม่มี arbitrary web shell
+- ค่าเริ่มต้น Web Manager bind เฉพาะ `127.0.0.1:28765`; รองรับ Standalone แบบตั้งใจเปิด `0.0.0.0` และ Reverse Proxy ผ่าน CloudPanel/NGINX/Caddy/Apache
+- เพิ่มคู่มือ Reverse Proxy/SSE/HTTPS แบบละเอียดใน `REVERSE_PROXY_GUIDE_TH.md`
+- หน้า Download รองรับ bootstrap installer แบบคำสั่งเดียว ดาวน์โหลด `latest` พร้อมตรวจ SHA-256 ก่อนเรียก `install.sh`; ถ้า source เป็น Git clone จะไม่เขียนทับ metadata ของ Git
+- แก้ first-run SQLite transaction race ที่อาจทำให้สร้าง Super Admin แล้วหน้า Setup ล้มใน draft ก่อนหน้า
+## Final cross-project hardening
+
+- first-run Super Admin creation เป็น atomic transaction ป้องกันการสร้าง Super Admin สองบัญชีพร้อมกัน
+- ผู้ใช้ทั่วไปไม่สามารถเปลี่ยน TeamTalk host/ports/encryption/bot login หลังผ่าน owner verification; Super Admin ยังแก้ได้
+- `password_tool.py` เปลี่ยนจาก legacy `auth.json` ไปใช้ SQLite recovery โดยไม่ลบ compatibility command
+- installer สร้าง system group `sntalkweb` อย่างชัดเจน และรักษา `/etc/default/sntalkbot-web-manager` เดิมตอนอัปเกรด
+- Self-update รัน `install.sh` แบบ upgrade-safe เพื่ออัปเดต dependencies/root bridge/systemd แล้ว schedule restart หลัง job จบ
+- เปลี่ยนตัวอย่าง fallback port จาก 28766 เป็น 28775 เพื่อไม่ชน Developer Report API
+

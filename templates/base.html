@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}SNTalkBot Web Manager{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<a class="skip" href="#main">ข้ามไปเนื้อหาหลัก</a>
+<header>
+  <h1>SNTalkBot Web Manager</h1>
+  {% if user %}
+  <p class="muted">เข้าสู่ระบบเป็น {{ user.display_name or user.username }}{% if user.role == 'superadmin' %} — Super Admin{% endif %}</p>
+  <nav aria-label="เมนูหลัก">
+    <a href="/">แดชบอร์ด</a>
+    <a href="/instances/new">สร้างบอต</a>
+    {% if user.role == 'superadmin' %}
+    <a href="/users">บัญชีผู้ใช้</a>
+    <a href="/migrate">ย้าย TTMediaBot</a>
+    <a href="/system">ระบบ/อัปเดต</a>
+    {% endif %}
+    <a href="/help">คู่มือเว็บ</a>
+    <form class="inline" method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">ออกจากระบบ</button></form>
+  </nav>
+  {% endif %}
+</header>
+<main id="main" tabindex="-1">
+{% block content %}{% endblock %}
+</main>
+<footer><p>SNTalkBot Web Manager {{ version }} — ออกแบบให้ใช้งานด้วยคีย์บอร์ดและโปรแกรมอ่านหน้าจอได้โดยไม่ต้องลากวาง</p></footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

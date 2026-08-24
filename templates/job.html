@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block title %}งาน {{ job.title }}{% endblock %}{% block content %}
+<h2>{{ job.title }}</h2>
+<p id="job-status" role="status" aria-live="polite">สถานะ: <strong>{{ job.status }}</strong></p>
+<p id="job-running-note" {% if job.status not in ('queued','running') %}hidden{% endif %}>ผลลัพธ์ด้านล่างจะอัปเดตทันทีระหว่างทำงาน หากคำสั่งใดเกิด error จะเห็นบรรทัดนั้นโดยไม่ต้องรอให้งานทั้งหมดจบ</p>
+<button type="button" data-copy-target="jobout">คัดลอกผลลัพธ์</button>
+<pre id="jobout" tabindex="0" data-job-id="{{ job.id }}">{{ job.output }}</pre>
+<p><a href="/">กลับแดชบอร์ด</a></p>
+{% endblock %}
