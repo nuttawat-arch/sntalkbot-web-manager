@@ -581,6 +581,9 @@ def create_instance(values: dict):
     path = root / name
     if path.exists():
         raise RuntimeError(f"Instance {name} มีอยู่แล้ว")
+    rc, out = root_run(["container-name-check", name], timeout=15)
+    if rc != 0:
+        raise RuntimeError(out.strip() or f"ชื่อ {name} ชนกับ Docker container ที่มีอยู่แล้ว กรุณาใช้ชื่อ instance อื่น")
     role = values.get("role", "full")
     if role not in ("full", "player", "manager"):
         raise RuntimeError("Bot role ไม่ถูกต้อง")

@@ -79,6 +79,30 @@ def valid_name(name):
     return name
 
 
+def managed_container_json(name):
+    name=valid_name(name)
+    raw=capture(["docker","inspect",name])
+    try:
+        data=json.loads(raw)
+        item=data[0]
+        labels=(item.get("Config") or {}).get("Labels") or {}
+    except Exception as exc:
+        raise SystemExit(f"unable to parse Docker inspect for {name}: {exc}")
+    helper=helper_settings(); expected_root=Path(helper["TTU_BOTS_ROOT"]).resolve()
+    expected_data=str((expected_root/name).resolve())
+    if labels.get("com.ttutilities.helper")!="true" or labels.get("com.ttutilities.bot")!=name or labels.get("com.ttutilities.data")!=expected_data:
+        raise SystemExit(f"refusing unmanaged Docker container: {name}")
+    return raw
+
+
+def require_container_name_available(name):
+    name=valid_name(name)
+    p=subprocess.run(["docker","container","inspect",name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=False)
+    if p.returncode==0:
+        raise SystemExit(f"Docker container name is already in use: {name}")
+    return 0
+
+
 def clone_or_update(repo, target):
     target=Path(target)
     if (target/".git").is_dir():
@@ -194,10 +218,16 @@ def main():
             elif args: raise SystemExit("unexpected arguments")
             return run(cmd)
         raise SystemExit("helper action not allowed")
+    if action=="container-name-check":
+        if len(args)!=1: raise SystemExit("container-name-check requires one instance name")
+        return require_container_name_available(args[0])
     if action=="docker-inspect":
-        name=valid_name(args[0] if args else ""); return run(["docker","inspect",name], check=False)
+        if len(args)!=1: raise SystemExit("docker-inspect requires one instance name")
+        sys.stdout.write(managed_container_json(args[0])); return 0
     if action=="docker-logs":
-        name=valid_name(args[0] if args else ""); tail=int(args[1] if len(args)>1 else 250); tail=max(20,min(tail,2000))
+        if not args: raise SystemExit("docker-logs requires an instance name")
+        name=valid_name(args[0]); managed_container_json(name)
+        tail=int(args[1] if len(args)>1 else 250); tail=max(20,min(tail,2000))
         return run(["docker","logs","--tail",str(tail),name], check=False)
     if action=="image-inspect":
         if len(args)!=1 or not re.fullmatch(r"[A-Za-z0-9._/:@-]+",args[0]): raise SystemExit("bad image")

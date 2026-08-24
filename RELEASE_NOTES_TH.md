@@ -1,3 +1,14 @@
+# SNTalkBot Web Manager 1.1.2
+
+## การเปลี่ยนแปลง
+
+- ป้องกันชื่อ instance ชนกับ Docker container ของบริการอื่นก่อนสร้างบอต
+- Docker inspect/logs ผ่าน privileged bridge จะอนุญาตเฉพาะ container ที่มี TTUHelper ownership labels ตรงกับ instance
+- ทำงานร่วมกับ TTUHelper 1.5.2 เพื่อป้องกัน destructive container-name collision แบบ defense in depth
+- คง action เดิมทั้งหมดและเพิ่ม regression coverage ของ action matrix
+
+---
+
 # SNTalkBot Web Manager 1.1.1
 
 ## การเปลี่ยนแปลง

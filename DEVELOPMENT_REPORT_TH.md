@@ -1,3 +1,30 @@
+# DEVELOPMENT REPORT — SNTalkBot Web Manager 1.1.2
+
+วันที่: 2026-08-25
+
+## ปัญหาจากรอบก่อน
+- 1.1.1 ติดตั้งและ health check บน production สำเร็จที่ `127.0.0.1:28765` แต่ action ที่แตะ Docker ยังอาศัยชื่อ container ก่อนยืนยัน ownership label
+- หากชื่อ instance ชนกับ container ของบริการอื่น อาจเกิดการอ่าน inspect/log ของ container ที่ไม่ใช่ SNTalkBot และ TTUHelper รุ่นก่อนมี destructive name-collision risk
+- validator เดิมทดสอบ auth/tenant/config แต่ยังไม่ได้ regression-test route/action matrix ทุกกลุ่ม
+
+## การแก้ไข/ฟีเจอร์
+- root bridge ตรวจ label `com.ttutilities.helper`, `com.ttutilities.bot`, `com.ttutilities.data` ก่อน Docker inspect/logs
+- เพิ่ม preflight `container-name-check` ก่อนสร้าง instance เพื่อปฏิเสธชื่อที่ชนกับ Docker container ใด ๆ ก่อนสร้างไฟล์/ownership
+- ทำงานร่วมกับ TTUHelper 1.5.2 ซึ่งป้องกัน run/stop/restart/delete/logs จาก unmanaged same-name container ที่ต้นทางอีกชั้น
+- เพิ่ม validator ตรวจ route/action matrix และ collision guard
+
+## การทดสอบรอบนี้
+- Python syntax, TestClient auth/tenant isolation, CSRF, config lock, job ownership, root bridge allowlist, Linux LF/Bash ผ่าน
+- action mapping ครบ create/run/stop/restart/delete/logs/config/limits/cookies/cookies-check/system actions/migration
+
+## ลบอะไรออก
+- ไม่มี action หรือฟีเจอร์ผู้ใช้เดิมถูกลบ
+
+## สถานะ
+- ต้อง publish 1.1.2 + TTUHelper 1.5.2 แล้วรัน production smoke/strict verification อีกครั้ง
+
+---
+
 # DEVELOPMENT REPORT — SNTalkBot Web Manager 1.1.1
 
 วันที่: 2026-08-24

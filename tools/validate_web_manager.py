@@ -55,7 +55,9 @@ checks={
  'installer preserves existing environment settings on upgrade':'Keeping existing Web Manager settings; adding only missing defaults.' in installer and 'write_default SNWEB_COOKIE_SECURE' in installer,
  'self-update reruns upgrade-safe installer then schedules restart':'run(["bash",installer],cwd=target)' in bridge and 'systemd-run' in bridge and '--on-active=2s' in bridge,
  'privileged bridge is only sudo target':'NOPASSWD: $ROOT_BRIDGE *' in installer and 'snweb-root' in installer,
- 'root bridge allowlist':'action not allowed' in bridge and 'migrate-ttmediabot' in bridge and 'install-stack' in bridge and 'bot-config-template' in bridge and 'bot-image-version' in bridge,
+ 'root bridge allowlist':'action not allowed' in bridge and 'migrate-ttmediabot' in bridge and 'install-stack' in bridge and 'bot-config-template' in bridge and 'bot-image-version' in bridge and 'container-name-check' in bridge,
+ 'Docker tenant isolation':'managed_container_json' in bridge and 'refusing unmanaged Docker container' in bridge and 'com.ttutilities.helper' in bridge and 'com.ttutilities.data' in bridge,
+ 'new-instance Docker name collision preflight':'container-name-check' in app and 'Docker container name is already in use' in bridge,
  'installer preflight':all(x in installer for x in ('has python3','has git','has curl','if has docker')),
  'production does not require /opt/sntalkbot source':'SNWEB_BOT_SOURCE' not in app and 'SNWEB_BOT_SOURCE' not in bridge and 'SNWEB_BOT_SOURCE' not in installer and 'update-bot-source' not in app and 'update-bot-source' not in bridge,
  'config template comes from Docker image':'bot-config-template' in app and 'image_text("/app/config_default.ini")' in bridge and '["docker","run","--rm","--entrypoint","cat",image_name(),path]' in bridge,
@@ -135,6 +137,104 @@ print('FUNCTIONAL_OK')
         if proc.returncode: print(proc.stdout); print(proc.stderr)
 except Exception as exc:
     need(False,f'functional Web Manager test: {exc!r}')
+
+# Functional action-matrix test. Privileged calls are replaced with an in-process
+# recorder, so every web route can be exercised without touching host Docker,
+# TTUHelper, systemd, or real instances.
+try:
+    with tempfile.TemporaryDirectory() as td:
+        t=Path(td); bots=t/'bots'; bots.mkdir(); etc=t/'ttu.conf'; secret=t/'secret'; secret.write_text('validation-secret-actions-0123456789\n')
+        etc.write_text(f'TTU_BOTS_ROOT="{bots}"\nTTU_IMAGE_REPO="example/bot"\nTTU_TAG="latest"\n')
+        env=os.environ.copy(); env.update({
+            'SNWEB_DATA_DIR':str(t/'data'),'SNWEB_DB_FILE':str(t/'data/db.sqlite'),'SNWEB_SESSION_SECRET_FILE':str(secret),
+            'TTU_HELPER_CONFIG':str(etc),'SNWEB_ROOT_BRIDGE':'/bin/false',
+        })
+        action_code = r"""
+from pathlib import Path
+import re, sys, time
+sys.path.insert(0, %r)
+from fastapi.testclient import TestClient
+from webmanager import app as mod
+calls=[]
+def fake_root(args, timeout=120, check=False):
+    a=tuple(str(x) for x in args); calls.append(('root',a))
+    if a and a[0]=='bot-config-template':
+        return 0, '[server]\naddress=\ntcp_port=10333\nudp_port=10333\nencrypted=False\nusername=\npassword=\n[bot]\nlanguage=th\nnickname=SN TalkBot\ndefault_channel=/\nchannel_password=\nstatus_message=auto\n[accounts]\nauthorized_users=\n[features]\nplayer_enabled=True\nserver_management_enabled=True\n[playback]\ncookiefile_path=/app/data/cookies.txt\n'
+    if a and a[0]=='container-name-check': return 0,''
+    if a and a[0]=='docker-logs': return 0,'hello-log\n'
+    if a and a[0]=='docker-inspect': return 1,''
+    if a and a[0]=='bot-image-version': return 0,'5.1.1\n'
+    if a and a[0]=='image-inspect': return 1,''
+    if a and a[0]=='remote-image-inspect': return 1,''
+    return 0,''
+def fake_stream(args, timeout=1800):
+    calls.append(('stream',tuple(str(x) for x in args))); return 0
+mod.root_run=fake_root; mod.stream_root=fake_stream
+mod.verify_owner_admin=lambda *a,**k: {'connected':True,'admins_online':[{'username':'owneradmin'}]}
+client=TestClient(mod.app)
+r=client.post('/setup',data={'username':'rootadmin','display_name':'Owner','password':'verystrongpass1','password2':'verystrongpass1'},follow_redirects=False); assert r.status_code==303
+r=client.get('/'); assert r.status_code==200
+csrf=re.search(r'name="csrf" value="([^"]+)"',r.text).group(1)
+# Create action
+r=client.post('/instances/new',data={'csrf':csrf,'name':'actionbot','role':'full','nickname':'Action Bot','hostname':'teamtalk.example','tcp_port':'10333','udp_port':'10333','owner_teamtalk_username':'owneradmin','authorized_users':'owneradmin','language':'th','status_message':'auto'},follow_redirects=False); assert r.status_code==303
+jid=r.headers['location'].rsplit('/',1)[-1]
+for _ in range(100):
+    j=mod.jobs.get(jid)
+    if j.get('status') in ('success','failed'): break
+    time.sleep(.02)
+assert mod.jobs.get(jid).get('status')=='success', mod.jobs.get(jid)
+assert (mod.bots_root()/'actionbot'/'config.ini').is_file()
+assert any(x[1] and x[1][0]=='container-name-check' for x in calls)
+# Logs
+r=client.get('/instances/actionbot/logs'); assert r.status_code==200 and 'hello-log' in r.text
+# Config
+r=client.get('/instances/actionbot/config'); assert r.status_code==200
+csrf2=re.search(r'name="csrf" value="([^"]+)"',r.text).group(1)
+r=client.post('/instances/actionbot/config',data={'csrf':csrf2,'kind__bot__nickname':'text','cfg__bot__nickname':'Changed Bot'},follow_redirects=False); assert r.status_code==303
+# Limits
+r=client.post('/instances/actionbot/limits',data={'csrf':csrf,'cpu':'0.5','memory':'256m'},follow_redirects=False); assert r.status_code==303
+assert 'cpu=0.5' in (mod.bots_root()/'actionbot'/'limits.conf').read_text()
+# Cookies install + check
+r=client.post('/instances/actionbot/cookies',data={'csrf':csrf},files={'cookie_file':('cookies.txt',b'# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tx\n','text/plain')},follow_redirects=False); assert r.status_code==303
+r=client.post('/instances/actionbot/cookies-check',data={'csrf':csrf},follow_redirects=False); assert r.status_code==303
+# Instance run/stop/restart
+for action in ('run','stop','restart'):
+    r=client.post('/instances/actionbot/action',data={'csrf':csrf,'action':action},follow_redirects=False); assert r.status_code==303
+# System actions
+for action in ('install-stack','update-helper','update-web','pull-image','update-running','doctor','start-all','stop-all'):
+    r=client.post('/system/action',data={'csrf':csrf,'action':action},follow_redirects=False); assert r.status_code==303
+# All cookies
+r=client.post('/system/cookies-all',data={'csrf':csrf},files={'cookie_file':('cookies.txt',b'# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tx\n','text/plain')},follow_redirects=False); assert r.status_code==303
+# Migration route
+r=client.post('/migrate',data={'csrf':csrf,'source':'/tmp/legacy-source','role':'full','dry_run':'on'},follow_redirects=False); assert r.status_code==303
+# Wait for queued actions
+for _ in range(200):
+    if all(j.get('status') in ('success','failed') for j in list(mod.jobs.jobs.values())): break
+    time.sleep(.02)
+expected=[
+ ('helper','cks','actionbot'),('helper','cks-check','actionbot'),('helper','run','actionbot'),('helper','stop','actionbot'),('helper','restart','actionbot'),
+ ('install-stack',),('update-helper',),('update-web',),('helper','pull'),('helper','update'),('helper','doctor'),('helper','start-all'),('helper','stop-all'),('helper','cks-all'),('migrate-ttmediabot',)
+]
+flat=[c[1] for c in calls if c[0]=='stream']+[c[1] for c in calls if c[0]=='root']
+for want in expected:
+    assert any(tuple(row[:len(want)])==want for row in flat), (want,flat)
+# Delete last; ownership must be removed only after the job action is queued/executed.
+r=client.post('/instances/actionbot/action',data={'csrf':csrf,'action':'delete','confirm_name':'actionbot'},follow_redirects=False); assert r.status_code==303
+jid=r.headers['location'].rsplit('/',1)[-1]
+for _ in range(100):
+    j=mod.jobs.get(jid)
+    if j.get('status') in ('success','failed'): break
+    time.sleep(.02)
+assert mod.jobs.get(jid).get('status')=='success'
+assert any(row[:3]==('helper','delete','actionbot') for row in [c[1] for c in calls if c[0]=='stream'])
+print('ACTION_MATRIX_OK')
+""" % str(root)
+        proc=subprocess.run([sys.executable,'-c',action_code],env=env,capture_output=True,text=True,timeout=45)
+        need(proc.returncode==0 and 'ACTION_MATRIX_OK' in proc.stdout, 'create/run/stop/restart/delete/logs/config/limits/cookies/system/migration routes execute through the expected action matrix')
+        if proc.returncode: print(proc.stdout); print(proc.stderr)
+except Exception as exc:
+    need(False,f'functional Web Manager action matrix: {exc!r}')
+
 try:
     with tempfile.TemporaryDirectory() as td:
         db=Path(td)/'recovery.db'

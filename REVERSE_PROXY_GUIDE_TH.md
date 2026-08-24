@@ -1,4 +1,4 @@
-# คู่มือติดตั้ง SNTalkBot Web Manager 1.1.1: Standalone และ Reverse Proxy
+# คู่มือติดตั้ง SNTalkBot Web Manager 1.1.2: Standalone และ Reverse Proxy
 
 Web Manager เป็นบริการ Python/FastAPI ที่ติดตั้งเป็น systemd service ชื่อ `sntalkbot-web-manager` โดยค่าเริ่มต้นจะฟังเฉพาะ `127.0.0.1:28765` เพื่อไม่เปิดหน้าจัดการออก Internet โดยไม่ตั้งใจ
 
@@ -24,7 +24,7 @@ ss -ltn | grep ':28765 ' || true
 
 ```bash
 sudo mkdir -p /opt/sntalkbot-web-manager
-sudo unzip -o SNTalkBot-Web-Manager-1.1.1.zip -d /opt/sntalkbot-web-manager
+sudo unzip -o SNTalkBot-Web-Manager-1.1.2.zip -d /opt/sntalkbot-web-manager
 cd /opt/sntalkbot-web-manager
 sudo chmod +x install.sh install_remote.sh
 sudo ./install.sh
