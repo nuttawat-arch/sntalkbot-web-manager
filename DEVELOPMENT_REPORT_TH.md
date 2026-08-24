@@ -1,3 +1,30 @@
+# DEVELOPMENT REPORT — SNTalkBot Web Manager 1.1.3
+
+วันที่: 2026-08-25
+
+## ปัญหาจากรอบก่อน
+- production 1.1.1 ติดตั้งได้ แต่รอบ publish 1.1.2 หยุดก่อนหน้า Download Site จึงยังแจก 1.1.1
+- updater ที่อาศัย `git pull --ff-only` สามารถล้มเมื่อ source บน server มี local changes/CRLF หรือไฟล์ untracked เช่นกรณีที่พบจริงกับ `/opt/ttuhelper`
+- bootstrap ZIP เดิมปฏิเสธทันทีเมื่อปลายทางเป็น Git clone ทำให้มีเส้นทางอัปเดตที่ยังกลับไปติดปัญหาเดิมได้
+
+## การแก้ไข/ฟีเจอร์
+- เปลี่ยน Web Manager Self-update, Update TTUHelper และ Core Stack source refresh เป็น fresh clone ลง staging ก่อนแตะ live source
+- สำรอง live source ทั้งโฟลเดอร์ก่อนสลับ, rollback อัตโนมัติเมื่อ installer ล้ม และเก็บ backup ล่าสุด 3 ชุด
+- `install_remote.sh` ใช้ staged/backup/rollback และไม่ใช้ live `git pull` อีก
+- persistent state ยังคงอยู่นอก source: `/etc/sntalkbot-web-manager`, `/var/lib/sntalkbot-web-manager`, `/opt/sntalkbot-bots` จึงไม่ถูก source replacement ลบ
+
+## การทดสอบรอบนี้
+- Python compile, Bash syntax, LF-only, TestClient/action matrix และ updater regression (dirty source backup + rollback)
+- ตรวจว่า source updater ไม่มี `git pull --ff-only` บน live tree
+
+## ลบอะไรออก
+- ไม่ลบ action ผู้ใช้; ลบเฉพาะกลไกอัปเดต live-tree แบบ `git pull` ที่เป็นสาเหตุ failure
+
+## สถานะ
+- พร้อม publish เป็น 1.1.3; หลัง publish ต้องอัปเดต production แล้วรัน strict server verification
+
+---
+
 # DEVELOPMENT REPORT — SNTalkBot Web Manager 1.1.2
 
 วันที่: 2026-08-25

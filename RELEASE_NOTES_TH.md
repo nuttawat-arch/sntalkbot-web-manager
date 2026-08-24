@@ -1,3 +1,15 @@
+# SNTalkBot Web Manager 1.1.3
+
+## การเปลี่ยนแปลง
+
+- เปลี่ยน Self-update และการอัปเดต TTUHelper จาก `git pull --ff-only` บน live tree เป็น fresh staged checkout ก่อนแตะของเดิม
+- ก่อนสลับรุ่นจะสำรอง source เดิมทั้งโฟลเดอร์ จึงเก็บ local edits, `.git`, `.venv` และไฟล์แปลกที่หลงอยู่ไว้เป็น rollback backup โดยไม่ให้สิ่งเหล่านี้ขวางการอัปเดต
+- ถ้า clone/staging ล้ม จะไม่แตะ live source; ถ้า installer รุ่นใหม่ล้ม จะคืน source เดิมและ best-effort ติดตั้งรุ่นเดิมกลับ
+- `install_remote.sh` ใช้พฤติกรรม staged/backup/rollback แบบเดียวกัน และเก็บ source backup ล่าสุดไว้ 3 ชุดโดยค่าเริ่มต้น
+- คง action matrix, ownership, Docker collision guard, persistent DB/config และ reverse proxy เดิมทั้งหมด
+
+---
+
 # SNTalkBot Web Manager 1.1.2
 
 ## การเปลี่ยนแปลง

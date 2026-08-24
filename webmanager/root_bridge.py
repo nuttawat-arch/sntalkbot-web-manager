@@ -103,20 +103,89 @@ def require_container_name_available(name):
     return 0
 
 
-def clone_or_update(repo, target):
+def _stamp():
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def _prune_source_backups(target, keep=3):
     target=Path(target)
-    if (target/".git").is_dir():
-        print(f"[GIT] Updating {target}", flush=True)
-        run(["git","-C",target,"fetch","--all","--prune"])
-        run(["git","-C",target,"pull","--ff-only"])
-    elif target.exists():
-        backup=target.with_name(target.name+".backup-"+datetime.now().strftime("%Y%m%d-%H%M%S"))
-        print(f"[BACKUP] Existing non-Git directory: {target} -> {backup}", flush=True)
+    backups=sorted(target.parent.glob(target.name+".backup-*"), key=lambda p: p.name, reverse=True)
+    for old in backups[keep:]:
+        try:
+            if old.is_dir() and not old.is_symlink():
+                shutil.rmtree(old)
+            else:
+                old.unlink()
+            print(f"[CLEANUP] Removed old source backup: {old}", flush=True)
+        except OSError as exc:
+            print(f"[WARN] Unable to remove old source backup {old}: {exc}", file=sys.stderr, flush=True)
+
+
+def replace_from_fresh_clone(repo, target):
+    """Stage a clean upstream checkout before touching the live source tree.
+
+    Production source directories are disposable; persistent Web Manager state is
+    kept in /etc and /var/lib, while SNTalkBot instance data lives under the
+    TTUHelper bots root.  A fresh clone avoids git-pull failures caused by local
+    edits, line-ending changes, or stray untracked files.  The previous complete
+    source tree is retained as a rollback backup.
+    """
+    target=Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    stamp=_stamp()
+    incoming=target.with_name(target.name+f".incoming-{stamp}-{os.getpid()}")
+    backup=target.with_name(target.name+f".backup-{stamp}-{os.getpid()}")
+    if incoming.exists():
+        shutil.rmtree(incoming) if incoming.is_dir() else incoming.unlink()
+    print(f"[STAGE] Fresh clone {repo} -> {incoming}", flush=True)
+    # Clone must finish successfully before the live tree is renamed.
+    run(["git","clone","--depth","1",repo,incoming])
+    if not (incoming/".git").is_dir() or not (incoming/"install.sh").is_file():
+        shutil.rmtree(incoming, ignore_errors=True)
+        raise SystemExit("staged repository is incomplete; live source was left untouched")
+    if target.exists() or target.is_symlink():
+        print(f"[BACKUP] Preserving complete previous source: {target} -> {backup}", flush=True)
         target.rename(backup)
-        run(["git","clone",repo,target])
     else:
-        print(f"[GIT] Cloning {repo} -> {target}", flush=True)
-        run(["git","clone",repo,target])
+        backup=None
+    try:
+        incoming.rename(target)
+    except Exception:
+        if backup is not None and backup.exists() and not target.exists():
+            backup.rename(target)
+        raise
+    return backup
+
+
+def rollback_source_replace(target, backup):
+    target=Path(target)
+    failed=target.with_name(target.name+f".failed-{_stamp()}-{os.getpid()}")
+    if target.exists() or target.is_symlink():
+        target.rename(failed)
+        print(f"[ROLLBACK] Failed new source kept at {failed}", file=sys.stderr, flush=True)
+    if backup is not None and Path(backup).exists():
+        backup=Path(backup)
+        backup.rename(target)
+        print(f"[ROLLBACK] Restored previous source: {target}", file=sys.stderr, flush=True)
+
+
+def install_fresh_checkout(repo, target, *, project_name):
+    target=Path(target)
+    backup=replace_from_fresh_clone(repo, target)
+    installer=target/"install.sh"
+    rc=run(["bash",installer], cwd=target, check=False)
+    if rc:
+        print(f"[FAIL] {project_name} installer returned {rc}; restoring previous source", file=sys.stderr, flush=True)
+        rollback_source_replace(target, backup)
+        # If an upgrade changed installed helper/bridge files before failing,
+        # best-effort re-run the restored installer to return system files to
+        # the same version as the restored source.
+        restored=target/"install.sh"
+        if restored.is_file():
+            run(["bash",restored], cwd=target, check=False)
+        raise SystemExit(rc)
+    _prune_source_backups(target)
+    return 0
 
 
 def install_stack(cfg):
@@ -135,8 +204,7 @@ def install_stack(cfg):
         print("[MISSING] Docker; TTUHelper installer will install it", flush=True)
     # SNTalkBot itself is deployed as a Docker image.  Do not create a host-side
     # /opt/sntalkbot source checkout just to satisfy Web Manager.
-    clone_or_update(cfg["SNWEB_TTU_REPO"], cfg["SNWEB_TTU_SOURCE"])
-    run(["bash", Path(cfg["SNWEB_TTU_SOURCE"])/"install.sh"], cwd=cfg["SNWEB_TTU_SOURCE"])
+    install_fresh_checkout(cfg["SNWEB_TTU_REPO"], cfg["SNWEB_TTU_SOURCE"], project_name="TTUHelper")
     run(["ttuhelper","doctor"])
 
 
@@ -244,15 +312,10 @@ def main():
         sys.stdout.write(image_text("/app/VERSION").strip()+"\n"); return 0
     if action=="install-stack": return install_stack(cfg)
     if action=="update-helper":
-        clone_or_update(cfg["SNWEB_TTU_REPO"],cfg["SNWEB_TTU_SOURCE"]); return run(["bash",Path(cfg["SNWEB_TTU_SOURCE"])/"install.sh"],cwd=cfg["SNWEB_TTU_SOURCE"])
+        return install_fresh_checkout(cfg["SNWEB_TTU_REPO"], cfg["SNWEB_TTU_SOURCE"], project_name="TTUHelper")
     if action=="update-web":
-        clone_or_update(cfg["SNWEB_WEB_REPO"],cfg["SNWEB_INSTALL_DIR"])
         target=Path(cfg["SNWEB_INSTALL_DIR"])
-        installer=target/"install.sh"
-        if not installer.is_file(): raise SystemExit("Web Manager install.sh is missing after update")
-        # Re-run the upgrade-safe installer so dependencies, root bridge,
-        # permissions and systemd definitions cannot drift from the source.
-        run(["bash",installer],cwd=target)
+        install_fresh_checkout(cfg["SNWEB_WEB_REPO"], target, project_name="Web Manager")
         # Restart from a separate transient systemd unit after this privileged
         # helper exits; restarting directly here can kill the caller's cgroup
         # before the web job receives its success output.

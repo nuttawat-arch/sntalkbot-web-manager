@@ -1,4 +1,4 @@
-# Mapping TTUHelper → SNTalkBot Web Manager 1.1.2
+# Mapping TTUHelper → SNTalkBot Web Manager 1.1.3
 
 - `new` → สร้างบอตใหม่
 - `run` → ปุ่มเริ่มในแต่ละ instance

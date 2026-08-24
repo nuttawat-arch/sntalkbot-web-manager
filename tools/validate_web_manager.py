@@ -53,12 +53,14 @@ checks={
  'service does not run as root':'User=$SERVICE_USER' in installer and 'SERVICE_USER="${SNWEB_SERVICE_USER:-sntalkweb}"' in installer,
  'installer explicitly creates same-name service group':'groupadd --system "$SERVICE_USER"' in installer and 'useradd --system --gid "$SERVICE_USER"' in installer,
  'installer preserves existing environment settings on upgrade':'Keeping existing Web Manager settings; adding only missing defaults.' in installer and 'write_default SNWEB_COOKIE_SECURE' in installer,
- 'self-update reruns upgrade-safe installer then schedules restart':'run(["bash",installer],cwd=target)' in bridge and 'systemd-run' in bridge and '--on-active=2s' in bridge,
+ 'self-update uses fresh staged checkout, rollback and scheduled restart':'replace_from_fresh_clone' in bridge and 'rollback_source_replace' in bridge and 'git","clone","--depth","1"' in bridge and 'systemd-run' in bridge and '--on-active=2s' in bridge,
  'privileged bridge is only sudo target':'NOPASSWD: $ROOT_BRIDGE *' in installer and 'snweb-root' in installer,
  'root bridge allowlist':'action not allowed' in bridge and 'migrate-ttmediabot' in bridge and 'install-stack' in bridge and 'bot-config-template' in bridge and 'bot-image-version' in bridge and 'container-name-check' in bridge,
  'Docker tenant isolation':'managed_container_json' in bridge and 'refusing unmanaged Docker container' in bridge and 'com.ttutilities.helper' in bridge and 'com.ttutilities.data' in bridge,
  'new-instance Docker name collision preflight':'container-name-check' in app and 'Docker container name is already in use' in bridge,
  'installer preflight':all(x in installer for x in ('has python3','has git','has curl','if has docker')),
+ 'no live git-pull updater remains':'pull --ff-only' not in bridge and 'pull --ff-only' not in app and 'pull --ff-only' not in (root/'install_remote.sh').read_text(encoding='utf-8'),
+ 'remote updater preserves full source before replace':'Preserving complete previous source' in (root/'install_remote.sh').read_text(encoding='utf-8') and '.incoming-' in (root/'install_remote.sh').read_text(encoding='utf-8') and '.failed-' in (root/'install_remote.sh').read_text(encoding='utf-8'),
  'production does not require /opt/sntalkbot source':'SNWEB_BOT_SOURCE' not in app and 'SNWEB_BOT_SOURCE' not in bridge and 'SNWEB_BOT_SOURCE' not in installer and 'update-bot-source' not in app and 'update-bot-source' not in bridge,
  'config template comes from Docker image':'bot-config-template' in app and 'image_text("/app/config_default.ini")' in bridge and '["docker","run","--rm","--entrypoint","cat",image_name(),path]' in bridge,
  'migration template comes from Docker image':'TemporaryDirectory(prefix="snweb-migrate-")' in bridge and 'template.write_text(image_text("/app/config_default.ini")' in bridge,
@@ -234,6 +236,32 @@ print('ACTION_MATRIX_OK')
         if proc.returncode: print(proc.stdout); print(proc.stderr)
 except Exception as exc:
     need(False,f'functional Web Manager action matrix: {exc!r}')
+
+# Functional source-updater regression: a dirty live tree must be backed up and replaced
+# only after a fresh staged clone succeeds. No network/git process is invoked.
+try:
+    with tempfile.TemporaryDirectory() as td:
+        import importlib.util
+        t=Path(td); target=t/'web'; target.mkdir(); (target/'local-edit.txt').write_text('keep me')
+        (target/'.git').mkdir(); (target/'install.sh').write_text('#!/bin/sh\nexit 0\n')
+        spec=importlib.util.spec_from_file_location('snweb_root_bridge_test', root/'webmanager/root_bridge.py')
+        rb=importlib.util.module_from_spec(spec); spec.loader.exec_module(rb)
+        old_run=rb.run
+        def fake_run(args,cwd=None,check=True):
+            args=[str(x) for x in args]
+            if args[:4]==['git','clone','--depth','1']:
+                incoming=Path(args[-1]); incoming.mkdir(parents=True); (incoming/'.git').mkdir();
+                (incoming/'install.sh').write_text('#!/bin/sh\nexit 0\n'); (incoming/'VERSION').write_text('new\n')
+                return 0
+            return 0
+        rb.run=fake_run
+        backup=rb.replace_from_fresh_clone('https://example.invalid/repo.git',target)
+        need((target/'VERSION').read_text().strip()=='new' and backup is not None and (backup/'local-edit.txt').read_text()=='keep me', 'dirty Web Manager source is fully backed up and replaced by a fresh staged checkout')
+        rb.rollback_source_replace(target,backup)
+        need((target/'local-edit.txt').read_text()=='keep me', 'source updater rollback restores the complete previous tree')
+        rb.run=old_run
+except Exception as exc:
+    need(False,f'functional staged source updater: {exc!r}')
 
 try:
     with tempfile.TemporaryDirectory() as td:

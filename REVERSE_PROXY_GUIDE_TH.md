@@ -1,4 +1,4 @@
-# คู่มือติดตั้ง SNTalkBot Web Manager 1.1.2: Standalone และ Reverse Proxy
+# คู่มือติดตั้ง SNTalkBot Web Manager 1.1.3: Standalone และ Reverse Proxy
 
 Web Manager เป็นบริการ Python/FastAPI ที่ติดตั้งเป็น systemd service ชื่อ `sntalkbot-web-manager` โดยค่าเริ่มต้นจะฟังเฉพาะ `127.0.0.1:28765` เพื่อไม่เปิดหน้าจัดการออก Internet โดยไม่ตั้งใจ
 
@@ -24,7 +24,7 @@ ss -ltn | grep ':28765 ' || true
 
 ```bash
 sudo mkdir -p /opt/sntalkbot-web-manager
-sudo unzip -o SNTalkBot-Web-Manager-1.1.2.zip -d /opt/sntalkbot-web-manager
+sudo unzip -o SNTalkBot-Web-Manager-1.1.3.zip -d /opt/sntalkbot-web-manager
 cd /opt/sntalkbot-web-manager
 sudo chmod +x install.sh install_remote.sh
 sudo ./install.sh
@@ -53,7 +53,7 @@ curl -fsSL https://ttdl.nuttawat.ddnsfree.com/install_web_manager.sh | sudo bash
 wget -qO- https://ttdl.nuttawat.ddnsfree.com/install_web_manager.sh | sudo bash
 ```
 
-ตัว bootstrap ตรวจเครื่องมือที่ต้องใช้ก่อน, ดาวน์โหลด `SNTalkBot-Web-Manager-latest.zip` พร้อม `.sha256`, ตรวจ SHA-256 ก่อนแตก และเรียก `install.sh` ต่อให้เอง ถ้า `/opt/sntalkbot-web-manager` เป็น Git clone อยู่แล้ว bootstrap จะหยุดและแนะนำให้ใช้ `git pull` เพื่อไม่ทำลาย metadata ของ Git
+ตัว bootstrap ตรวจเครื่องมือที่ต้องใช้ก่อน, ดาวน์โหลด `SNTalkBot-Web-Manager-latest.zip` พร้อม `.sha256`, ตรวจ SHA-256 และแตกไป staging ก่อนแตะของเดิม จากนั้นสำรอง source เดิมทั้งโฟลเดอร์แล้วจึงติดตั้งรุ่นใหม่ จึงไม่ติดปัญหา local changes หรือ `.git`; ถ้า installer ล้มจะ restore source รุ่นเดิมให้อัตโนมัติ
 
 ## 3. ติดตั้งจาก GitHub
 
@@ -65,15 +65,13 @@ sudo chmod +x install.sh install_remote.sh
 sudo ./install.sh
 ```
 
-ถ้ามี repo อยู่แล้ว:
+ถ้ามี repo/การติดตั้งอยู่แล้ว ไม่ต้อง `git pull` ให้ใช้ updater ที่ทนต่อ local changes โดยตรง:
 
 ```bash
-cd /opt/sntalkbot-web-manager
-sudo git pull --ff-only
-sudo ./install.sh
+sudo bash /opt/sntalkbot-web-manager/install_remote.sh
 ```
 
-หรือใช้ `install_remote.sh` ซึ่งจะตรวจ `git`/CA certificates ก่อนและ clone/update ให้เอง:
+`install_remote.sh` จะตรวจ `git`/CA certificates, clone รุ่นใหม่ลง staging, สำรอง source เดิมทั้งโฟลเดอร์และ rollback ได้เอง:
 
 ```bash
 sudo bash /opt/sntalkbot-web-manager/install_remote.sh

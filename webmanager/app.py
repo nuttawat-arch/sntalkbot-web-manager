@@ -506,26 +506,6 @@ def can_view_job(user, job):
     return owner is not None and int(owner) == int(user["id"])
 
 
-def clone_or_update(repo: str, target: Path):
-    lines = []
-    if (target / ".git").is_dir():
-        for args in (["git", "-C", target, "fetch", "--all", "--prune"], ["git", "-C", target, "pull", "--ff-only"]):
-            rc, out = run(args, timeout=180)
-            lines.append(out)
-            if rc != 0:
-                raise RuntimeError("".join(lines))
-        return "".join(lines)
-    if target.exists():
-        backup = target.with_name(target.name + ".backup-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
-        target.rename(backup)
-        lines.append(f"Backed up {target} -> {backup}\n")
-    rc, out = run(["git", "clone", repo, target], timeout=300)
-    lines.append(out)
-    if rc != 0:
-        raise RuntimeError("".join(lines))
-    return "".join(lines)
-
-
 def job_install_stack():
     job_emit("Preflight: checking git/curl/python3/Docker before installing anything")
     stream_root(["install-stack"], timeout=1800)
