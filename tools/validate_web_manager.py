@@ -62,6 +62,10 @@ checks={
  'static JS/CSS URLs are cache-busted by Web Manager version':'/static/app.js?v={{ version }}' in base and '/static/style.css?v={{ version }}' in base and 'src="/static/app.js"' not in base and 'href="/static/style.css"' not in base,
  'Users page hides create form until requested':'data-disclosure-target="create-user-panel"' in users_tpl and 'id="create-user-panel" hidden' in users_tpl and 'aria-expanded="false"' in users_tpl,
  'dashboard isolates malformed instance/realtime data':'Normalize old/new/partial realtime payloads' in app and 'warnings=[]' in app and 'ข้อมูลบางส่วนของ instance นี้อ่านไม่สมบูรณ์' in dash_tpl,
+ 'Super Admin dashboard uses authoritative batch snapshot and claims only unowned instances':'instances-snapshot' in app and 'docker-list-managed' in app and 'STORE.claim_unowned(names, int(user["id"]))' in app and 'owners_map(names)' in app and 'ผู้สร้าง/เจ้าของ:' in dash_tpl and 'สร้าง/นำเข้าเมื่อ:' in dash_tpl,
+ 'Dashboard realtime is one SSE stream with parallel bot probes':'/dashboard/live' in app and '_dashboard_live_rows' in app and 'asyncio.gather' in app and "new EventSource('/dashboard/live')" in js and 'dashboard-live-announcer' in dash_tpl,
+ 'System remote update probes do not block initial HTML':'system_status(False, include_expensive=False)' in app and '/system/remote-status' in app and 'ThreadPoolExecutor(max_workers=5)' in app and "fetch('/system/remote-status'" in js and 'การตรวจ GitHub/Docker Registry ทำต่อเบื้องหลัง' in system_tpl,
+ 'Dashboard batch snapshot has rolling-upgrade compatibility fallback':'_local_instance_snapshot' in app and 'Old root bridge compatibility only' in app and 'instances-snapshot' in bridge and 'docker-list-managed' in bridge,
  'last-resort 500 boundary is static and carries request id':'class LastResortErrorMiddleware' in app and '_last_resort_error_html' in app and 'X-SNTalkBot-Request-ID' in app and '@app.exception_handler(Exception)' in app and 'Request ID' in app,
  'realtime instance SSE':'/instances/{name}/live' in app and 'await asyncio.sleep(0.5)' in app and 'live-instance' in insttpl and 'container_running' in app and 'บอตหยุดอยู่ — ไม่มีข้อมูลสด' in js,
  'room/server realtime fields rendered':'room_users_online' in app and 'server_users_online' in app and 'live-room-users' in insttpl and 'live-server-users' in insttpl and 'admins_in_room_count' in app,
@@ -188,12 +192,13 @@ assert client2.get('/jobs/'+j2).status_code==200
 # One malformed migrated instance must not turn the whole dashboard into HTTP 500.
 bad=root/'brokenmigrate'; bad.mkdir(); (bad/'config.ini').write_text('[broken\\nvalue=x\\n'); mod.STORE.set_owner('brokenmigrate',admin['id'],'')
 r=client.get('/'); assert r.status_code==200 and 'brokenmigrate' in r.text and 'ข้อมูลบางส่วนของ instance นี้อ่านไม่สมบูรณ์' in r.text
-# A failing system probe is isolated as a warning instead of taking down /.
-orig_image_version=mod.bot_image_version
+# A failing *fast* dashboard probe is isolated as a warning instead of taking down /.
+# Heavy image/registry probes are deliberately absent from the initial Dashboard request.
+orig_helper_version=mod.helper_version
 def probe_boom(): raise RuntimeError('validator-probe-boom')
-mod.bot_image_version=probe_boom
-r=client.get('/'); assert r.status_code==200 and 'SNTalkBot image version: RuntimeError' in r.text
-mod.bot_image_version=orig_image_version
+mod.helper_version=probe_boom
+r=client.get('/'); assert r.status_code==200 and 'TTUHelper version: RuntimeError' in r.text
+mod.helper_version=orig_helper_version
 partial=mod.normalize_live_payload({'room_users_online':1,'player':{'title':'เพลงทดสอบ'},'channel':None,'teamtalk_activity':None})
 assert partial['channel']=={'id':0,'name':''} and partial['teamtalk_activity']['speaking']==0 and partial['player']['queue']==[]
 # The normal FastAPI exception handler must return Thai HTML + Request ID.
@@ -331,6 +336,57 @@ print('ACTION_MATRIX_OK')
         if proc.returncode: print(proc.stdout); print(proc.stderr)
 except Exception as exc:
     need(False,f'functional Web Manager action matrix: {exc!r}')
+
+# Functional batch-discovery/ownership regression: Super Admin sees every real
+# instance, unowned legacy instances are assigned only to Super Admin, and a
+# normal tenant still sees only their own mapping.
+try:
+    with tempfile.TemporaryDirectory() as td:
+        t=Path(td); bots=t/'bots'; bots.mkdir(); etc=t/'ttu.conf'; secret=t/'secret'; secret.write_text('snapshot-validation-secret-0123456789\n')
+        etc.write_text(f'TTU_BOTS_ROOT="{bots}"\nTTU_IMAGE_REPO="example/bot"\nTTU_TAG="latest"\n')
+        env=os.environ.copy(); env.update({
+            'SNWEB_DATA_DIR':str(t/'data'),'SNWEB_DB_FILE':str(t/'data/db.sqlite'),'SNWEB_SESSION_SECRET_FILE':str(secret),
+            'TTU_HELPER_CONFIG':str(etc),'SNWEB_ROOT_BRIDGE':'/bin/false',
+        })
+        snapshot_code = r"""
+import json, re, sys
+sys.path.insert(0, %r)
+from fastapi.testclient import TestClient
+from webmanager import app as mod
+snapshot=[
+ {'name':'LegacyBot','role':'player','nickname':'Legacy','server':'tt.example','channel':'/','created_at':'2026-08-20T01:02:03+00:00','config_warning':''},
+ {'name':'TenantBot','role':'player','nickname':'Tenant','server':'tt.example','channel':'/room','created_at':'2026-08-21T02:03:04+00:00','config_warning':''},
+]
+containers={x['name']:{'exists':True,'running':True,'status':'running','image':'example/bot:latest','restart_count':0} for x in snapshot}
+def fake_root(args,timeout=120,check=False):
+ a=tuple(str(x) for x in args)
+ if a==('instances-snapshot',): return 0,json.dumps(snapshot)
+ if a==('docker-list-managed',): return 0,json.dumps(containers)
+ if a and a[0]=='bot-image-version': return 0,'5.1.6\n'
+ if a and a[0]=='image-inspect': return 1,''
+ if a and a[0]=='docker-inspect': return 1,''
+ return 0,''
+mod.root_run=fake_root
+mod.helper_version=lambda:'1.5.3'; mod.guardian_status=lambda:{'ok':True,'guardian_version':'1.0.0','backend':'127.0.0.1:28766'}
+client=TestClient(mod.app)
+r=client.post('/setup',data={'username':'rootadmin','display_name':'Root Owner','password':'verystrongpass1','password2':'verystrongpass1'},follow_redirects=False); assert r.status_code==303
+admin=mod.STORE.get_user_by_username('rootadmin')
+customer=mod.STORE.create_user('customer','customerpass123',display_name='Customer',created_by=admin['id'])
+mod.STORE.set_owner('TenantBot',customer['id'],'tenantadmin')
+r=client.get('/'); assert r.status_code==200
+assert 'บอตทั้งหมด (2)' in r.text and 'LegacyBot' in r.text and 'TenantBot' in r.text
+assert 'Root Owner (rootadmin)' in r.text and '2026-08-20T01:02:03+00:00' in r.text
+assert mod.STORE.owner('LegacyBot')['owner_user_id']==admin['id']
+assert mod.STORE.owner('TenantBot')['owner_user_id']==customer['id']
+client2=TestClient(mod.app); assert client2.post('/login',data={'username':'customer','password':'customerpass123'},follow_redirects=False).status_code==303
+r=client2.get('/'); assert r.status_code==200 and 'บอตของคุณ (1)' in r.text and 'TenantBot' in r.text and 'LegacyBot' not in r.text
+print('SNAPSHOT_OWNERSHIP_OK')
+""" % str(root)
+        proc=subprocess.run([sys.executable,'-c',snapshot_code],env=env,capture_output=True,text=True,timeout=30)
+        need(proc.returncode==0 and 'SNAPSHOT_OWNERSHIP_OK' in proc.stdout, 'Super Admin sees all batch-discovered instances while tenant count/ownership stays isolated')
+        if proc.returncode: print(proc.stdout); print(proc.stderr)
+except Exception as exc:
+    need(False,f'batch ownership functional test: {exc!r}')
 
 # Functional source-updater regression: a dirty live tree must be backed up and replaced
 # only after a fresh staged clone succeeds. No network/git process is invoked.

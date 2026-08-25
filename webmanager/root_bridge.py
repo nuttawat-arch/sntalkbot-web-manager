@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import configparser
 import json
 import os
 from pathlib import Path
@@ -305,6 +306,79 @@ def migrate_ttmediabot(cfg, args):
     return 0
 
 
+
+def instance_snapshot():
+    """Return only secret-free instance metadata from the authoritative helper root."""
+    root = Path(helper_settings().get("TTU_BOTS_ROOT") or "/opt/sntalkbot-bots")
+    rows = []
+    if not root.is_dir():
+        return rows
+    for path in sorted(root.iterdir(), key=lambda p: p.name.lower()):
+        if not path.is_dir() or not NAME_RE.fullmatch(path.name) or not (path / "config.ini").is_file():
+            continue
+        cfg = configparser.ConfigParser(interpolation=None)
+        warning = ""
+        try:
+            cfg.read(path / "config.ini", encoding="utf-8")
+        except Exception as exc:
+            warning = type(exc).__name__
+        meta = {}
+        try:
+            for raw in (path / "instance.conf").read_text(encoding="utf-8", errors="replace").splitlines():
+                if "=" in raw:
+                    k, v = raw.split("=", 1)
+                    meta[k.strip()] = v.strip()
+        except Exception:
+            pass
+        role = str(meta.get("mode") or "").lower()
+        if role not in {"full", "player", "manager"}:
+            player = cfg.getboolean("features", "player_enabled", fallback=True)
+            manager = cfg.getboolean("features", "server_management_enabled", fallback=True)
+            role = "full" if player and manager else ("player" if player else "manager")
+        rows.append({
+            "name": path.name,
+            "role": role,
+            "nickname": cfg.get("bot", "nickname", fallback=path.name),
+            "server": cfg.get("server", "address", fallback=""),
+            "channel": cfg.get("bot", "default_channel", fallback="/"),
+            "created_at": meta.get("created") or "",
+            "config_warning": warning,
+        })
+    return rows
+
+
+def managed_containers_snapshot():
+    """Inspect all TTUHelper-owned containers in one Docker call."""
+    proc = subprocess.run(
+        ["docker", "ps", "-aq", "--filter", "label=com.ttutilities.helper=true"],
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+    )
+    if proc.returncode:
+        raise SystemExit(proc.returncode)
+    ids = [x.strip() for x in proc.stdout.splitlines() if x.strip()]
+    if not ids:
+        return {}
+    raw = capture(["docker", "inspect", *ids])
+    out = {}
+    for data in json.loads(raw):
+        cfg = data.get("Config") or {}
+        labels = cfg.get("Labels") or {}
+        if str(labels.get("com.ttutilities.helper", "")).lower() != "true":
+            continue
+        name = str(labels.get("com.ttutilities.bot") or str(data.get("Name") or "").lstrip("/"))
+        if not NAME_RE.fullmatch(name):
+            continue
+        state = data.get("State") or {}
+        out[name] = {
+            "exists": True,
+            "running": bool(state.get("Running")),
+            "status": state.get("Status") or "unknown",
+            "started_at": state.get("StartedAt"),
+            "image": cfg.get("Image") or "",
+            "restart_count": int(data.get("RestartCount") or 0),
+        }
+    return out
+
 def main():
     if os.geteuid()!=0: raise SystemExit("root bridge must run as root")
     cfg=settings(); args=sys.argv[1:]
@@ -349,6 +423,12 @@ def main():
     if action=="docker-inspect":
         if len(args)!=1: raise SystemExit("docker-inspect requires one instance name")
         sys.stdout.write(managed_container_json(args[0])); return 0
+    if action=="instances-snapshot":
+        if args: raise SystemExit("instances-snapshot takes no arguments")
+        sys.stdout.write(json.dumps(instance_snapshot(), ensure_ascii=False)); return 0
+    if action=="docker-list-managed":
+        if args: raise SystemExit("docker-list-managed takes no arguments")
+        sys.stdout.write(json.dumps(managed_containers_snapshot(), ensure_ascii=False)); return 0
     if action=="docker-logs":
         if not args: raise SystemExit("docker-logs requires an instance name")
         name=valid_name(args[0]); managed_container_json(name)

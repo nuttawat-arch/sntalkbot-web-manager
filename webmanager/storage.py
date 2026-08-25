@@ -152,6 +152,18 @@ class Store:
             ).fetchone()
             return dict(row) if row else None
 
+    def owners_map(self, instance_names):
+        names = [str(x) for x in instance_names if str(x)]
+        if not names:
+            return {}
+        marks = ",".join("?" for _ in names)
+        with self.connect() as db:
+            rows = db.execute(
+                f"SELECT io.*,u.username,u.display_name FROM instance_owners io JOIN users u ON u.id=io.owner_user_id WHERE io.instance_name IN ({marks})",
+                names,
+            ).fetchall()
+            return {str(row["instance_name"]): dict(row) for row in rows}
+
     def set_owner(self, instance_name: str, owner_user_id: int, teamtalk_admin_username: str = ""):
         now = datetime.now(timezone.utc).isoformat()
         with self.connect() as db:

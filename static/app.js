@@ -300,3 +300,115 @@ document.addEventListener('click', (e) => {
   };
   es.onerror = () => { if (connection && lastConnection !== 'การเชื่อมต่อข้อมูลสดขาดหาย กำลังเชื่อมใหม่') { lastConnection='การเชื่อมต่อข้อมูลสดขาดหาย กำลังเชื่อมใหม่'; connection.textContent=lastConnection; } };
 })();
+
+
+(function dashboardRealtime() {
+  const root = document.getElementById('dashboard-live-root');
+  if (!root || !window.EventSource) return;
+  const expected = new Set((root.dataset.instanceNames || '').split(',').filter(Boolean));
+  const announcer = document.getElementById('dashboard-live-announcer');
+  const previous = new Map();
+  const safeId = (name) => {
+    const node = document.querySelector(`[data-dashboard-live="${CSS.escape(name)}"]`);
+    return node ? node.dataset.dashboardIndex : null;
+  };
+  const announce = (msg) => {
+    if (!announcer || !msg) return;
+    announcer.textContent = '';
+    window.setTimeout(() => { announcer.textContent = msg; }, 20);
+  };
+  const es = new EventSource('/dashboard/live');
+  es.onmessage = (event) => {
+    let payload; try { payload = JSON.parse(event.data); } catch (_) { return; }
+    const rows = Array.isArray(payload.instances) ? payload.instances : [];
+    const names = new Set(rows.map((x) => x.name));
+    if (names.size !== expected.size || [...names].some((name) => !expected.has(name))) {
+      announce('รายการบอตเปลี่ยนแปลง กำลังอัปเดตแดชบอร์ด');
+      window.setTimeout(() => location.reload(), 300);
+      return;
+    }
+    for (const row of rows) {
+      const idx = safeId(row.name); if (!idx) continue;
+      const running = document.getElementById(`dash-running-${idx}`);
+      const connection = document.getElementById(`dash-connection-${idx}`);
+      const room = document.getElementById(`dash-room-${idx}`);
+      const activity = document.getElementById(`dash-activity-${idx}`);
+      const player = document.getElementById(`dash-player-${idx}`);
+      const live = row.runtime && !row.runtime.stale ? row.runtime : null;
+      if (running) running.textContent = row.running ? 'กำลังรัน' : 'หยุดอยู่';
+      if (!row.running) {
+        if (connection) { connection.textContent = 'บอตหยุดอยู่ — ไม่มีข้อมูลสด'; connection.classList.add('muted'); }
+        if (room) room.hidden = true; if (activity) activity.hidden = true; if (player) player.hidden = true;
+      } else if (!live) {
+        if (connection) { connection.textContent = 'กำลังรอข้อมูลสดจากบอต…'; connection.classList.add('muted'); }
+        if (room) room.hidden = true; if (activity) activity.hidden = true; if (player) player.hidden = true;
+      } else {
+        if (connection) { connection.textContent = live.connected ? 'เชื่อมต่อ TeamTalk แล้ว' : 'ยังไม่เชื่อมต่อ TeamTalk'; connection.classList.remove('muted'); }
+        if (room) {
+          const ch = (live.channel && (live.channel.name || live.channel.id)) || '-';
+          room.textContent = `สด: ห้อง ${ch} | คนในห้อง ${live.room_users_online ?? '-'} | ทั้งเซิร์ฟเวอร์ ${live.server_users_online ?? '-'} | Administrator ออนไลน์ ${live.admins_online_count ?? 0}`;
+          room.hidden = false;
+        }
+        if (activity) {
+          const a = live.teamtalk_activity || {};
+          activity.textContent = `TeamTalk: กำลังพูด ${a.speaking ?? 0} | media ${a.media ?? 0} | video ${a.video ?? 0} | desktop ${a.desktop ?? 0}`;
+          activity.hidden = false;
+        }
+        if (player) {
+          if (live.player) {
+            player.textContent = `Player: ${live.player.is_playing ? 'กำลังเล่น' : 'ว่าง'} — ${live.player.title || '-'} | คิว ${live.player.queue_count ?? 0} | Q ${live.player.queue_mode ? 'ON' : 'OFF'} | M${live.player.play_mode ?? 0}`;
+            player.hidden = false;
+          } else player.hidden = true;
+        }
+      }
+      const now = {
+        running: !!row.running,
+        connected: !!(live && live.connected),
+        title: live && live.player ? (live.player.title || '') : '',
+        queue: live && live.player ? (live.player.queue_count ?? 0) : 0,
+      };
+      const before = previous.get(row.name);
+      if (before) {
+        if (before.running !== now.running) announce(`${row.name} ${now.running ? 'เริ่มทำงานแล้ว' : 'หยุดทำงานแล้ว'}`);
+        else if (now.running && before.connected !== now.connected) announce(`${row.name} ${now.connected ? 'เชื่อมต่อ TeamTalk แล้ว' : 'หลุดจาก TeamTalk'}`);
+        else if (now.title && before.title !== now.title) announce(`${row.name} กำลังเล่น ${now.title}`);
+        else if (before.queue !== now.queue) announce(`${row.name} จำนวนคิวเปลี่ยนเป็น ${now.queue}`);
+      }
+      previous.set(row.name, now);
+    }
+  };
+  es.onerror = () => {
+    const msg = document.getElementById('dashboard-live-announcer');
+    if (msg) msg.textContent = 'การเชื่อมต่อข้อมูลสดขาดหายชั่วคราว ระบบกำลังเชื่อมใหม่อัตโนมัติ';
+  };
+})();
+
+(function systemRemoteStatus() {
+  const status = document.getElementById('remote-update-status');
+  if (!status) return;
+  fetch('/system/remote-status', {cache: 'no-store', headers: {'Accept':'application/json'}})
+    .then((r) => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+    .then((data) => {
+      const web = document.getElementById('remote-web');
+      const helper = document.getElementById('remote-helper');
+      const image = document.getElementById('remote-image');
+      const localImage = document.getElementById('local-image');
+      const botVersion = document.getElementById('local-bot-version');
+      if (web) {
+        const local = web.dataset.localVersion || '';
+        web.textContent = data.web_remote ? `| รุ่นบน GitHub ${data.web_remote}${local && data.web_remote !== local ? ' — มี Web Manager รุ่นใหม่' : ''}` : '| ตรวจรุ่นบน GitHub ไม่สำเร็จ';
+      }
+      if (helper) {
+        const local = helper.dataset.localVersion || '';
+        helper.textContent = data.helper_remote ? `| รุ่นบน GitHub ${data.helper_remote}${local && data.helper_remote !== local ? ' — มี TTUHelper รุ่นใหม่' : ''}` : '| ตรวจรุ่นบน GitHub ไม่สำเร็จ';
+      }
+      if (botVersion) botVersion.textContent = data.bot_image_version || 'ยังอ่านเวอร์ชันไม่ได้';
+      if (localImage) localImage.textContent = data.local_image_digest ? `Local digest: ${data.local_image_digest}` : 'Local digest: ยังอ่านไม่ได้';
+      if (image) {
+        const local = data.local_image_digest || '';
+        image.textContent = data.remote_image_digest ? `Remote latest: ${data.remote_image_digest}${local ? (data.remote_image_digest === local ? ' — ตรงกับ latest' : ' — มี image ใหม่') : ''}` : 'Remote latest: ตรวจไม่สำเร็จ';
+      }
+      status.textContent = 'ตรวจรุ่นล่าสุดเบื้องหลังเสร็จแล้ว';
+    })
+    .catch((err) => { status.textContent = `ตรวจรุ่นล่าสุดเบื้องหลังไม่สำเร็จ: ${err}`; });
+})();

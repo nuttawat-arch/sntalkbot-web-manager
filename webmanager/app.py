@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import configparser
+import concurrent.futures
 from datetime import datetime, timezone
 import hashlib
 import hmac
@@ -306,6 +307,93 @@ def normalize_live_payload(data):
     return data
 
 
+_SNAPSHOT_LOCK = threading.Lock()
+_SNAPSHOT_CACHE = {}
+
+
+def _cached_snapshot(key: str, ttl: float, loader, default):
+    now = time.monotonic()
+    with _SNAPSHOT_LOCK:
+        item = _SNAPSHOT_CACHE.get(key)
+        if item and now - item[0] < ttl:
+            return item[1]
+    try:
+        value = loader()
+    except Exception:
+        LOGGER.exception("snapshot loader failed: %s", key)
+        value = default
+    with _SNAPSHOT_LOCK:
+        _SNAPSHOT_CACHE[key] = (now, value)
+    return value
+
+
+def _local_instance_snapshot():
+    root = bots_root()
+    rows = []
+    if not root.is_dir():
+        return rows
+    try:
+        paths = sorted(root.iterdir(), key=lambda p: p.name.lower())
+    except OSError:
+        return rows
+    for path in paths:
+        if not path.is_dir() or not BOT_NAME_RE.fullmatch(path.name) or not (path / "config.ini").is_file():
+            continue
+        warning = ""
+        try:
+            cfg = read_config(path / "config.ini")
+        except Exception as exc:
+            cfg = configparser.ConfigParser(interpolation=None)
+            warning = type(exc).__name__
+        try:
+            role = read_instance_role(path, cfg)
+        except Exception:
+            role = "unknown"
+        meta = read_instance_meta(path)
+        rows.append({
+            "name": path.name,
+            "role": role,
+            "nickname": cfg.get("bot", "nickname", fallback=path.name),
+            "server": cfg.get("server", "address", fallback=""),
+            "channel": cfg.get("bot", "default_channel", fallback="/"),
+            "created_at": meta.get("created") or "",
+            "config_warning": warning,
+        })
+    return rows
+
+
+def root_instance_snapshot(force=False):
+    def load():
+        rc, out = root_run(["instances-snapshot"], timeout=10)
+        if rc == 0 and (out or "").strip():
+            try:
+                data = json.loads(out)
+                return [dict(x) for x in data if isinstance(x, dict) and BOT_NAME_RE.fullmatch(str(x.get("name") or ""))]
+            except Exception:
+                LOGGER.exception("invalid instances-snapshot payload; using compatibility fallback")
+        # Compatibility during rolling upgrade and for old bridge/test harnesses.
+        return _local_instance_snapshot()
+    if force:
+        with _SNAPSHOT_LOCK:
+            _SNAPSHOT_CACHE.pop("instances", None)
+    return _cached_snapshot("instances", 2.0, load, [])
+
+
+def docker_containers_snapshot(force=False):
+    def load():
+        rc, out = root_run(["docker-list-managed"], timeout=10)
+        if rc != 0 or not (out or "").strip():
+            # Rolling-upgrade/old-bridge compatibility; list_instances falls back
+            # to per-instance docker-inspect only while this batch action is absent.
+            return {}
+        data = json.loads(out)
+        return {str(k): dict(v) for k, v in data.items() if isinstance(v, dict)} if isinstance(data, dict) else {}
+    if force:
+        with _SNAPSHOT_LOCK:
+            _SNAPSHOT_CACHE.pop("containers", None)
+    return _cached_snapshot("containers", 1.0, load, {})
+
+
 def bot_api_status(path: Path):
     meta = read_instance_meta(path)
     try:
@@ -450,62 +538,60 @@ def runtime_state(path: Path):
         return None
 
 
-def list_instances(user=None):
-    """Return every visible instance without letting one bad instance break / ."""
-    root = bots_root()
-    result = []
-    if not root.is_dir():
-        return result
+def list_instances(user=None, *, include_live=True, force_snapshot=False):
+    """Return visible instances from one privileged snapshot plus one Docker snapshot.
+
+    The authoritative root-side metadata scan prevents a Web service group/permission
+    drift from making Super Admin see an empty dashboard.  Live API reads are optional
+    so the first HTML render never waits on every bot one-by-one.
+    """
+    meta_rows = root_instance_snapshot(force=force_snapshot)
+    names = [str(row.get("name")) for row in meta_rows]
+    if user and user.get("role") == "superadmin":
+        # Any real pre-existing instance without a Web owner belongs to the first/
+        # current Super Admin. Existing tenant mappings are never overwritten.
+        STORE.claim_unowned(names, int(user["id"]))
     allowed = None
     if user and user.get("role") != "superadmin":
         allowed = STORE.owned_names(int(user["id"]))
-    for path in sorted(root.iterdir(), key=lambda p: p.name.lower()):
-        if not path.is_dir() or not (path / "config.ini").is_file():
+    owners = STORE.owners_map(names)
+    containers = docker_containers_snapshot(force=force_snapshot)
+    batch_container_snapshot_available = bool(containers)
+    result = []
+    for meta in meta_rows:
+        name = str(meta.get("name") or "")
+        if allowed is not None and name not in allowed:
             continue
-        if allowed is not None and path.name not in allowed:
-            continue
-        warnings=[]
-        cfg=configparser.ConfigParser(interpolation=None)
-        try:
-            cfg = read_config(path / "config.ini")
-        except Exception as exc:
-            LOGGER.exception("instance config read failed: %s", path.name)
-            warnings.append(f"อ่าน config ไม่สำเร็จ ({type(exc).__name__})")
-        try:
-            cont = docker_container(path.name)
-        except Exception as exc:
-            LOGGER.exception("container status read failed: %s", path.name)
-            cont=None
-            warnings.append(f"อ่านสถานะ container ไม่สำเร็จ ({type(exc).__name__})")
-        try:
-            live = live_state(path, running=bool(cont and cont.get("running")))
-        except Exception as exc:
-            LOGGER.exception("realtime status read failed: %s", path.name)
-            live=None
-            warnings.append(f"อ่านข้อมูลสดไม่สำเร็จ ({type(exc).__name__})")
-        try:
-            role=read_instance_role(path, cfg)
-        except Exception as exc:
-            LOGGER.exception("instance role read failed: %s", path.name)
-            role="unknown"
-            warnings.append(f"อ่านประเภทบอตไม่สำเร็จ ({type(exc).__name__})")
-        try:
-            owner=STORE.owner(path.name)
-        except Exception as exc:
-            LOGGER.exception("instance owner read failed: %s", path.name)
-            owner=None
-            warnings.append(f"อ่านเจ้าของไม่สำเร็จ ({type(exc).__name__})")
+        cont = containers.get(name)
+        if cont is None and not batch_container_snapshot_available:
+            # Old root bridge compatibility only. Production 1.1.12 normally uses
+            # one docker-list-managed call for the whole dashboard.
+            try:
+                cont = docker_container(name)
+            except Exception:
+                cont = None
+        warnings = []
+        if meta.get("config_warning"):
+            warnings.append(f"อ่าน config ไม่สมบูรณ์ ({meta['config_warning']})")
+        live = None
+        if include_live and cont and cont.get("running"):
+            try:
+                live = live_state(bots_root() / name, running=True)
+            except Exception as exc:
+                LOGGER.exception("realtime status read failed: %s", name)
+                warnings.append(f"อ่านข้อมูลสดไม่สำเร็จ ({type(exc).__name__})")
         result.append({
-            "name": path.name,
-            "path": str(path),
-            "role": role,
-            "nickname": cfg.get("bot", "nickname", fallback=path.name),
-            "server": cfg.get("server", "address", fallback=""),
-            "channel": cfg.get("bot", "default_channel", fallback="/"),
+            "name": name,
+            "path": str(bots_root() / name),
+            "role": meta.get("role") or "unknown",
+            "nickname": meta.get("nickname") or name,
+            "server": meta.get("server") or "",
+            "channel": meta.get("channel") or "/",
+            "created_at": meta.get("created_at") or (owners.get(name) or {}).get("created_at") or "ไม่ทราบ",
             "container": cont,
             "running": bool(cont and cont.get("running")),
             "runtime": live,
-            "owner": owner,
+            "owner": owners.get(name),
             "warnings": warnings,
         })
     return result
@@ -816,6 +902,9 @@ def create_instance(values: dict):
         # bundled project default on first start; a future TTUHelper cks replaces it.
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    with _SNAPSHOT_LOCK:
+        _SNAPSHOT_CACHE.pop("instances", None)
+        _SNAPSHOT_CACHE.pop("containers", None)
     return path
 
 
@@ -947,7 +1036,7 @@ def guardian_status():
     return None
 
 
-def system_status(include_remote=False):
+def system_status(include_remote=False, include_expensive=True):
     """Collect system summary without letting one probe take down the dashboard."""
     warnings = []
 
@@ -973,10 +1062,10 @@ def system_status(include_remote=False):
         "helper_version": probe("TTUHelper version", helper_version),
         "helper_remote": None,
         "web_remote": None,
-        "bot_image_version": probe("SNTalkBot image version", bot_image_version),
+        "bot_image_version": probe("SNTalkBot image version", bot_image_version) if include_expensive else None,
         "docker_installed": probe("Docker installed", docker_installed, False),
         "image": f"{repo}:{tag}",
-        "local_image_digest": probe("local image digest", local_image_digest),
+        "local_image_digest": probe("local image digest", local_image_digest) if include_expensive else None,
         "remote_image_digest": None,
         "bots_root": root,
         "helper_source": str(TTU_SOURCE),
@@ -1140,13 +1229,13 @@ def dashboard(request: Request):
     user=require_login(request)
     page_warnings=[]
     try:
-        instances=list_instances(user)
+        instances=list_instances(user, include_live=False, force_snapshot=True)
     except Exception as exc:
         LOGGER.exception("dashboard instance enumeration failed")
         instances=[]
         page_warnings.append(f"อ่านรายการ instance ไม่สำเร็จ ({type(exc).__name__})")
     try:
-        system=system_status(False)
+        system=system_status(False, include_expensive=False)
         page_warnings.extend(system.get("warnings") or [])
     except Exception as exc:
         LOGGER.exception("dashboard system summary failed")
@@ -1158,6 +1247,76 @@ def dashboard(request: Request):
     })
 
 
+def _dashboard_runtime_payload(row):
+    live = row.get("runtime") if isinstance(row.get("runtime"), dict) else None
+    return {
+        "name": row.get("name"),
+        "running": bool(row.get("running")),
+        "container_status": (row.get("container") or {}).get("status") if isinstance(row.get("container"), dict) else None,
+        "runtime": live,
+    }
+
+
+async def _dashboard_live_rows(user):
+    rows = await asyncio.to_thread(list_instances, user, include_live=False)
+    running = [row for row in rows if row.get("running")]
+    if running:
+        states = await asyncio.gather(*[
+            asyncio.to_thread(live_state, bots_root() / str(row["name"]), running=True)
+            for row in running
+        ], return_exceptions=True)
+        for row, state in zip(running, states):
+            row["runtime"] = None if isinstance(state, Exception) else state
+    return rows
+
+
+@app.get("/dashboard/live")
+async def dashboard_live(request: Request):
+    user = require_login(request)
+    async def events():
+        last = None
+        while True:
+            if await request.is_disconnected():
+                break
+            try:
+                rows = await _dashboard_live_rows(user)
+                payload = {"instances": [_dashboard_runtime_payload(row) for row in rows], "server_epoch": time.time()}
+                encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                if encoded != last:
+                    last = encoded
+                    yield "data: " + encoded + "\n\n"
+            except Exception as exc:
+                LOGGER.exception("dashboard live stream failed")
+                yield "event: warning\ndata: " + json.dumps({"message": type(exc).__name__}) + "\n\n"
+            await asyncio.sleep(1.0)
+    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
+
+
+def remote_update_status():
+    # All network/Docker-heavy checks run outside the initial HTML request and in
+    # parallel. The System page is immediately keyboard/screen-reader usable.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+        fw = pool.submit(remote_version, WEB_REPO)
+        fh = pool.submit(remote_version, TTU_REPO)
+        fri = pool.submit(remote_image_digest)
+        fli = pool.submit(local_image_digest)
+        fbv = pool.submit(bot_image_version)
+        return {
+            "web_remote": fw.result(),
+            "helper_remote": fh.result(),
+            "remote_image_digest": fri.result(),
+            "local_image_digest": fli.result(),
+            "bot_image_version": fbv.result(),
+        }
+
+
+@app.get("/system/remote-status")
+async def system_remote_status(request: Request):
+    require_superadmin(request)
+    data = await asyncio.to_thread(remote_update_status)
+    return JSONResponse({"ok": True, **data})
+
+
 @app.get("/help", response_class=HTMLResponse)
 def help_page(request: Request):
     user=require_login(request)
@@ -1166,7 +1325,7 @@ def help_page(request: Request):
 @app.get("/system", response_class=HTMLResponse)
 def system_page(request: Request):
     user=require_superadmin(request)
-    return templates.TemplateResponse("system.html", {"request": request, "user":user, "system": system_status(True), "csrf": csrf_token(request), "version": VERSION})
+    return templates.TemplateResponse("system.html", {"request": request, "user":user, "system": system_status(False, include_expensive=False), "csrf": csrf_token(request), "version": VERSION})
 
 
 @app.post("/system/action")

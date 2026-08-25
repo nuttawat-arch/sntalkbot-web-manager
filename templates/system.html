@@ -2,13 +2,14 @@
 <h2>ตรวจระบบ / ติดตั้ง / อัปเดต</h2>
 <dl>
 <dt>Web Guardian</dt><dd>{% if system.guardian %}พร้อม — Guardian {{ system.guardian.guardian_version }} | {{ system.guardian.backend }}{% else %}<strong>ยังไม่ทำงาน</strong> — การอัปเดตเว็บอาจทำให้ reverse proxy เห็น backend ขาดช่วง{% endif %}</dd>
-<dt>Web Manager</dt><dd>{{ system.web_version }}{% if system.web_remote %} | รุ่นบน GitHub {{ system.web_remote }}{% if system.web_remote != system.web_version %} — <strong>มี Web Manager รุ่นใหม่</strong>{% endif %}{% endif %}</dd>
-<dt>TTUHelper</dt><dd>{{ system.helper_version or 'ยังไม่ติดตั้ง' }}{% if system.helper_remote %} | รุ่นบน GitHub {{ system.helper_remote }}{% if system.helper_version and system.helper_remote != system.helper_version %} — <strong>มี TTUHelper รุ่นใหม่</strong>{% endif %}{% endif %}</dd>
-<dt>SNTalkBot image</dt><dd>{{ system.bot_image_version or 'ยังอ่านเวอร์ชันไม่ได้' }} — <code>{{ system.image }}</code></dd>
+<dt>Web Manager</dt><dd>{{ system.web_version }} <span id="remote-web" data-local-version="{{ system.web_version }}">| กำลังตรวจรุ่นล่าสุดเบื้องหลัง…</span></dd>
+<dt>TTUHelper</dt><dd>{{ system.helper_version or 'ยังไม่ติดตั้ง' }} <span id="remote-helper" data-local-version="{{ system.helper_version or '' }}">| กำลังตรวจรุ่นล่าสุดเบื้องหลัง…</span></dd>
+<dt>SNTalkBot image</dt><dd><span id="local-bot-version">กำลังตรวจเวอร์ชันเบื้องหลัง…</span> — <code>{{ system.image }}</code></dd>
 <dt>Docker</dt><dd>{{ 'พร้อม' if system.docker_installed else 'ยังไม่ติดตั้ง' }}</dd>
-<dt>Image</dt><dd>{{ system.image }}{% if system.local_image_digest %}<br>Local digest: <code>{{ system.local_image_digest }}</code>{% endif %}{% if system.remote_image_digest %}<br>Remote latest: <code>{{ system.remote_image_digest }}</code>{% if system.local_image_digest and system.remote_image_digest != system.local_image_digest %} — <strong>มี image ใหม่</strong>{% elif system.local_image_digest %} — ตรงกับ latest{% endif %}{% endif %}</dd>
+<dt>Image</dt><dd>{{ system.image }}<br><span id="local-image">Local digest: กำลังตรวจเบื้องหลัง…</span><br><span id="remote-image">Remote latest: กำลังตรวจเบื้องหลัง…</span></dd>
 <dt>Instance root</dt><dd><code>{{ system.bots_root }}</code></dd>
 </dl>
+<p id="remote-update-status" role="status" aria-live="polite" class="muted">หน้าเว็บพร้อมใช้งานแล้ว การตรวจ GitHub/Docker Registry ทำต่อเบื้องหลังและไม่บล็อกเมนู</p>
 <h3>ติดตั้งครั้งแรก/ซ่อม Core Stack</h3><p>ระบบจะตรวจ <code>git</code>, <code>curl</code>, <code>python3</code> และ Docker ก่อนทุกครั้ง แล้วติดตั้งเฉพาะสิ่งที่ยังไม่มี จากนั้น clone/update เฉพาะ TTUHelper, ให้ installer pull SNTalkBot Docker image, รัน installer และ doctor ผลทุกขั้นตอนแสดงแบบ realtime ในหน้า Job</p>
 <form method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><button name="action" value="install-stack">ตรวจและติดตั้ง/ซ่อม Core Stack</button></form>
 <h3>อัปเดต</h3><form class="actions" method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}">
