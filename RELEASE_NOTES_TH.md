@@ -1,3 +1,13 @@
+# SNTalkBot Web Manager 1.1.10 — Job Dialog Action Routing Fix
+
+- แก้ production HTTP 404 ของ Job dialog เมื่อกด action ในหน้า System เช่น “อัปเดต TTUHelper + install”
+- สาเหตุคือ DOM clobbering: ปุ่มมี `name="action"` และ JavaScript เดิมอ่าน `form.action` ทำให้ property URL ถูก control ชื่อเดียวกันชนใน browser
+- Job dialog เปลี่ยนไปอ่าน endpoint/method จาก `getAttribute()` และ resolve URL ด้วย `new URL(..., document.baseURI)` จึง POST ไป endpoint ที่ template ประกาศจริงเสมอ
+- เพิ่ม regression gate ห้ามกลับไปใช้ `fetch(form.action, ...)` และคง no-JS fallback, Guardian, tenant isolation, stopped-only Delete และ Job SSE เดิม
+- ซ่อม Guardian runtime validator ให้ public/backend test port ไม่ชนกันและรายงาน startup stderr ถ้า process ล้ม ลด false failure แบบ `ConnectionRefusedError`
+
+---
+
 # SNTalkBot Web Manager 1.1.9 — Dashboard Recovery / Migration Repair Integration
 
 - คง Users list-first และ Job dialog ในหน้าเดิมจาก 1.1.8

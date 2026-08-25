@@ -1,3 +1,21 @@
+# Development Report — Web Manager 1.1.10 (Job Dialog DOM-clobber Fix)
+
+## Production evidence
+- `POST /system/action` มีอยู่จริงใน FastAPI; GET ตรงที่ backend 28766 และผ่าน Guardian 28765 ตอบ 405 พร้อม `Allow: POST` ตามคาด
+- privileged bridge `snweb-root update-helper` ทำงานสำเร็จและ TTUHelper 1.5.3 ซ่อม migrated config 7/7 จึงตัดปัญหา TTUHelper/root bridge ออกจากสาเหตุของ HTTP 404 บนหน้าเว็บ
+- ปุ่ม Job dialog หน้า System ใช้ control `name="action"` ขณะที่ JavaScript 1.1.8/1.1.9 ใช้ `fetch(form.action, ...)`; HTMLFormElement named-property access สามารถถูก control ชื่อ `action` ชนได้ (DOM clobbering) ทำให้ fetch URL ไม่ใช่ `/system/action`
+
+## Fix
+- อ่าน action/method ด้วย `form.getAttribute()` เท่านั้น และ resolve endpoint ด้วย `new URL(actionAttr, document.baseURI)`
+- คง FormData submitter เพื่อส่งค่าปุ่ม `action=update-helper`/action อื่นตามเดิม
+- validator เพิ่ม gate: ต้องไม่มี `fetch(form.action` และต้องมี attribute-based endpoint resolution พร้อม template ที่มี `name="action"` เพื่อจับ regression ต้นเหตุจริง
+- ซ่อมพอร์ตทดสอบ Guardian ใน validator ให้ public/backend ไม่เลือกเลขเดียวกัน และตรวจ process exit/stderr ระหว่าง startup เพื่อไม่ให้ false `ConnectionRefusedError` บัง error จริง
+
+## Validation
+- `python tools/validate_web_manager.py` PASS รวม FastAPI/TestClient action matrix, Job dialog metadata, Guardian POST/SSE, updater rollback, LF/Bash และ DOM-clobber regression ใหม่
+
+---
+
 # Development Report — Web Manager 1.1.9 (Queue/Migration Recovery)
 
 - ยืนยันบั๊ก production bare Internal Server Error ยังต้องถือเป็น blocker; 1.1.9 ใช้ dashboard fault isolation + static last-resort Request ID boundary ที่ไม่พึ่ง Jinja/config/database

@@ -58,6 +58,7 @@ checks={
  'login throttling':'LOGIN_MAX_FAILURES = 8' in app and 'login_blocked' in app,
  'realtime jobs':'StreamingResponse' in app and '/jobs/{jid}/stream' in app and 'EventSource' in js and 'data-job-id' in jobtpl,
  'in-page accessible Job dialog':'<dialog id="job-dialog"' in base and 'data-job-form' in system_tpl and 'X-SNTalkBot-Job-Dialog' in app and 'job_created_response' in app and 'showModal()' in js and 'ปิดและกลับไปทำงานต่อ' in js,
+ 'Job dialog endpoint is immune to form action DOM clobbering':'fetch(form.action' not in js and "form.getAttribute('action')" in js and 'new URL(actionAttr, document.baseURI).href' in js and 'name="action"' in system_tpl,
  'Users page hides create form until requested':'data-disclosure-target="create-user-panel"' in users_tpl and 'id="create-user-panel" hidden' in users_tpl and 'aria-expanded="false"' in users_tpl,
  'dashboard isolates malformed instance/realtime data':'Normalize old/new/partial realtime payloads' in app and 'warnings=[]' in app and 'ข้อมูลบางส่วนของ instance นี้อ่านไม่สมบูรณ์' in dash_tpl,
  'last-resort 500 boundary is static and carries request id':'class LastResortErrorMiddleware' in app and '_last_resort_error_html' in app and 'X-SNTalkBot-Request-ID' in app and '@app.exception_handler(Exception)' in app and 'Request ID' in app,
@@ -362,13 +363,21 @@ try:
     def free_port():
         sock=socket.socket(); sock.bind(('127.0.0.1',0)); port=sock.getsockname()[1]; sock.close(); return port
     public_port=free_port(); backend_port=free_port()
+    while backend_port == public_port:
+        backend_port = free_port()
     env=os.environ.copy(); env.update({'SNWEB_BIND':'127.0.0.1','SNWEB_PORT':str(public_port),'SNWEB_APP_BIND':'127.0.0.1','SNWEB_APP_PORT':str(backend_port)})
     gp=subprocess.Popen([sys.executable,str(root/'guardian/snweb_guardian.py')],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     try:
-        for _ in range(30):
+        for _ in range(40):
             try:
                 urllib.request.urlopen(f'http://127.0.0.1:{public_port}/guardian-healthz',timeout=.2); break
-            except Exception: time.sleep(.05)
+            except Exception:
+                if gp.poll() is not None:
+                    out, err = gp.communicate(timeout=1)
+                    raise AssertionError(f'guardian exited during startup rc={gp.returncode}: {out} {err}')
+                time.sleep(.05)
+        else:
+            raise AssertionError('guardian health endpoint did not become ready')
         try:
             urllib.request.urlopen(f'http://127.0.0.1:{public_port}/',timeout=1); raise AssertionError('maintenance unexpectedly returned success')
         except urllib.error.HTTPError as exc:

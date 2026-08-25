@@ -149,8 +149,16 @@ document.addEventListener('click', (e) => {
         body = new FormData(form);
         if (submitter && submitter.name) body.set(submitter.name, submitter.value);
       }
-      const resp = await fetch(form.action, {
-        method: (form.method || 'post').toUpperCase(),
+      // Do not use form.action/form.method here. HTML forms expose named controls
+      // as properties, so a submit button named "action" can clobber form.action
+      // and turn the fetch target into an element/stringified garbage URL. Read the
+      // attributes explicitly so System actions such as update-helper always POST to
+      // the declared endpoint (/system/action).
+      const actionAttr = form.getAttribute('action') || location.pathname;
+      const endpoint = new URL(actionAttr, document.baseURI).href;
+      const methodAttr = form.getAttribute('method') || 'post';
+      const resp = await fetch(endpoint, {
+        method: methodAttr.toUpperCase(),
         body,
         credentials: 'same-origin',
         headers: {

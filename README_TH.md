@@ -1,4 +1,4 @@
-# SNTalkBot Web Manager 1.1.9
+# SNTalkBot Web Manager 1.1.10
 
 เว็บแดชบอร์ด self-hosted สำหรับจัดการ SNTalkBot และ TTUHelper หลาย instance โดยไม่ต้องพิมพ์คำสั่ง Linux ทุกครั้ง เหมาะกับเครื่อง Ubuntu/Debian ที่รัน SNTalkBot/TTUHelper และออกแบบให้ใช้ได้ทั้งเจ้าของเครื่องคนเดียวหรือหลายบัญชีลูกค้า
 
@@ -16,7 +16,7 @@ SNTalkBot Full มี 124 canonical commands และ TTUHelper มี 22 comma
 
 1. **SNTalkBot 5.1.0+** — ตัวบอตหลักและ Realtime Status API ภายใน
 2. **TTUHelper 1.5.0+** — จัดการหลาย instance, Docker, update, delete, API port/token และ Linux data layout
-3. **SNTalkBot Web Manager 1.1.9+** — หน้าเว็บจัดการสองโปรเจกต์ด้านบน
+3. **SNTalkBot Web Manager 1.1.10+** — หน้าเว็บจัดการสองโปรเจกต์ด้านบน
 
 ## ความสามารถหลัก
 
@@ -64,13 +64,13 @@ bootstrap จะตรวจเครื่องมือ, ดาวน์โ�
 
 ## Production layout แบบ Docker-only
 
-Web Manager 1.1.9 ไม่ต้องมี SNTalkBot source checkout ที่ `/opt/sntalkbot` บน production host อีกแล้ว ตัวบอตจริงมาจาก Docker image ที่ TTUHelper กำหนด และข้อมูลแต่ละ instance อยู่ที่ `/opt/sntalkbot-bots/` ตาม production architecture ปัจจุบัน การสร้าง instance และ migration จะอ่าน `config_default.ini` จาก Docker image โดยตรง ส่วน `/opt/ttuhelper` และ `/opt/sntalkbot-web-manager` ยังคงเป็น source/tool บน host ตามหน้าที่ของตนเอง
+Web Manager 1.1.10 ไม่ต้องมี SNTalkBot source checkout ที่ `/opt/sntalkbot` บน production host อีกแล้ว ตัวบอตจริงมาจาก Docker image ที่ TTUHelper กำหนด และข้อมูลแต่ละ instance อยู่ที่ `/opt/sntalkbot-bots/` ตาม production architecture ปัจจุบัน การสร้าง instance และ migration จะอ่าน `config_default.ini` จาก Docker image โดยตรง ส่วน `/opt/ttuhelper` และ `/opt/sntalkbot-web-manager` ยังคงเป็น source/tool บน host ตามหน้าที่ของตนเอง
 
 ## การติดตั้งจาก ZIP
 
 ```bash
 sudo mkdir -p /opt/sntalkbot-web-manager
-sudo unzip -o SNTalkBot-Web-Manager-1.1.9.zip -d /opt/sntalkbot-web-manager
+sudo unzip -o SNTalkBot-Web-Manager-1.1.10.zip -d /opt/sntalkbot-web-manager
 cd /opt/sntalkbot-web-manager
 sudo chmod +x install.sh install_remote.sh
 sudo ./install.sh
