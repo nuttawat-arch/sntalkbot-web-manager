@@ -1,6 +1,7 @@
 {% extends "base.html" %}{% block title %}แดชบอร์ด — SNTalkBot Web Manager{% endblock %}
 {% block content %}
 <h2>ภาพรวม</h2>
+{% if page_warnings %}<p class="warning" role="status">หน้าเว็บอ่านข้อมูลระบบบางส่วนไม่สำเร็จ แต่ยังใช้งานส่วนที่เหลือได้: {{ page_warnings|join('; ') }}</p>{% endif %}
 <p>TTUHelper: {{ system.helper_version or 'ยังไม่ติดตั้ง' }} | Docker: {{ 'พร้อม' if system.docker_installed else 'ยังไม่พร้อม' }} | Image: {{ system.image }}</p>
 {% if user.role == 'superadmin' and (not system.helper_installed or not system.docker_installed) %}<p class="warning">Core Stack ยังไม่พร้อม ไปที่ <a href="/system">ระบบ/อัปเดต</a> เพื่อให้เว็บตรวจและติดตั้งเฉพาะสิ่งที่ยังขาด</p>{% endif %}
 <p><a class="button" href="/instances/new">สร้างบอตใหม่</a></p>
@@ -10,7 +11,7 @@
 <details class="bot-card" {% if loop.first %}open{% endif %}>
 <summary><strong>{{ bot.name }}</strong> — {{ 'กำลังรัน' if bot.running else 'หยุดอยู่' }} — {{ bot.role }}</summary>
 {% if bot.warnings %}<p class="warning" role="status">ข้อมูลบางส่วนของ instance นี้อ่านไม่สมบูรณ์ แต่ Dashboard ส่วนอื่นยังทำงานได้: {{ bot.warnings|join('; ') }}</p>{% endif %}
-{% if user.role == 'superadmin' and bot.owner %}<p>เจ้าของเว็บ: {{ bot.owner.display_name or bot.owner.username }} ({{ bot.owner.username }}){% endif %}</p>
+{% if user.role == 'superadmin' and bot.owner %}<p>เจ้าของเว็บ: {{ bot.owner.display_name or bot.owner.username }} ({{ bot.owner.username }})</p>{% endif %}
 <p>ชื่อเล่น: {{ bot.nickname }} | Server: {{ bot.server }} | ห้องตั้งต้น: {{ bot.channel }}</p>
 {% if bot.runtime and not bot.runtime.stale %}
 <p>สดผ่าน {{ bot.runtime.transport or 'runtime bridge' }}: ห้อง {{ bot.runtime.channel.name or bot.runtime.channel.id or '-' }} | คนในห้อง {% if bot.runtime.room_users_online is not none %}{{ bot.runtime.room_users_online }}{% else %}รอ SNTalkBot 5.1.2+{% endif %} | ทั้งเซิร์ฟเวอร์ {{ bot.runtime.server_users_online if bot.runtime.server_users_online is not none else '-' }} | Administrator ที่ออนไลน์ {{ bot.runtime.admins_online_count or 0 }}{% if bot.runtime.admins_in_room_count is not none %} (ในห้อง {{ bot.runtime.admins_in_room_count }}){% endif %} | uptime {{ bot.runtime.uptime_seconds }} วินาที</p>

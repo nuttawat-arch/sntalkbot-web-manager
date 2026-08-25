@@ -86,10 +86,55 @@ def _session_secret():
 
 SESSION_SECRET = _session_secret()
 
+
+def _last_resort_error_html(request_id: str) -> str:
+    # Deliberately static: this fallback must not depend on Jinja, SQLite,
+    # instance config, sessions, Guardian state, or any other component that may
+    # itself be the source of the failure.
+    return f"""<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>เกิดข้อผิดพลาด — SNTalkBot Web Manager</title></head><body><main><h1>SNTalkBot Web Manager</h1><h2>หน้าเว็บพบข้อผิดพลาด</h2><p role="alert">Web Manager ไม่สามารถสร้างหน้านี้ได้ แต่บอตและ Docker ไม่ได้ถูกหยุดโดยข้อความนี้</p><p>ลองเปิด <a href="/">แดชบอร์ด</a> อีกครั้ง หากเกิดซ้ำให้แจ้ง Request ID นี้โดยไม่ต้องส่งรหัสผ่านหรือ token</p><p>Request ID: <code>{request_id}</code></p></main></body></html>"""
+
+
+class LastResortErrorMiddleware:
+    """Catch failures outside FastAPI's normal ExceptionMiddleware.
+
+    Session/user middleware and an exception handler that fails while rendering
+    can otherwise fall back to Starlette's bare ``Internal Server Error`` body.
+    Keep this pure ASGI so SSE/job streaming is passed through without buffering.
+    """
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        started = False
+
+        async def tracked_send(message):
+            nonlocal started
+            if message.get("type") == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, tracked_send)
+        except Exception:
+            request_id = uuid.uuid4().hex[:12]
+            LOGGER.exception("Last-resort Web Manager error request_id=%s path=%s", request_id, scope.get("path", "?"))
+            if started:
+                raise
+            body = _last_resort_error_html(request_id).encode("utf-8")
+            await send({"type": "http.response.start", "status": 500, "headers": [(b"content-type", b"text/html; charset=utf-8"), (b"content-length", str(len(body)).encode("ascii")), (b"x-sntalkbot-request-id", request_id.encode("ascii"))]})
+            await send({"type": "http.response.body", "body": body})
+
+
 app = FastAPI(title="SNTalkBot Web Manager", docs_url=None, redoc_url=None)
 # Ten-year persistent browser session. It remains invalid if the account is disabled
 # or the server-side session secret is deliberately rotated.
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax", https_only=os.getenv("SNWEB_COOKIE_SECURE", "false").strip().lower() in ("1","true","yes","on"), max_age=10 * 365 * 24 * 3600)
+# Added after SessionMiddleware so it is the outer user middleware and can catch
+# session/middleware failures as well as errors re-raised by inner handlers.
+app.add_middleware(LastResortErrorMiddleware)
 app.mount("/static", StaticFiles(directory=APP_ROOT / "static"), name="static")
 templates = Jinja2Templates(directory=APP_ROOT / "templates")
 templates.env.globals["process_generation"] = PROCESS_GENERATION
@@ -903,26 +948,45 @@ def guardian_status():
 
 
 def system_status(include_remote=False):
-    settings = helper_settings()
+    """Collect system summary without letting one probe take down the dashboard."""
+    warnings = []
+
+    def probe(label, func, default=None):
+        try:
+            return func()
+        except Exception as exc:
+            LOGGER.exception("system status probe failed: %s", label)
+            warnings.append(f"{label}: {type(exc).__name__}")
+            return default
+
+    settings = probe("TTUHelper settings", helper_settings, {
+        "TTU_IMAGE_REPO": IMAGE_REPO_DEFAULT,
+        "TTU_TAG": IMAGE_TAG_DEFAULT,
+        "TTU_BOTS_ROOT": str(DEFAULT_BOTS_ROOT),
+    }) or {}
+    repo = settings.get("TTU_IMAGE_REPO") or IMAGE_REPO_DEFAULT
+    tag = settings.get("TTU_TAG") or IMAGE_TAG_DEFAULT
+    root = settings.get("TTU_BOTS_ROOT") or str(DEFAULT_BOTS_ROOT)
     data = {
         "web_version": VERSION,
-        "helper_installed": helper_installed(),
-        "helper_version": helper_version(),
+        "helper_installed": probe("TTUHelper installed", helper_installed, False),
+        "helper_version": probe("TTUHelper version", helper_version),
         "helper_remote": None,
         "web_remote": None,
-        "bot_image_version": bot_image_version(),
-        "docker_installed": docker_installed(),
-        "image": f"{settings['TTU_IMAGE_REPO']}:{settings['TTU_TAG']}",
-        "local_image_digest": local_image_digest(),
+        "bot_image_version": probe("SNTalkBot image version", bot_image_version),
+        "docker_installed": probe("Docker installed", docker_installed, False),
+        "image": f"{repo}:{tag}",
+        "local_image_digest": probe("local image digest", local_image_digest),
         "remote_image_digest": None,
-        "bots_root": settings["TTU_BOTS_ROOT"],
+        "bots_root": root,
         "helper_source": str(TTU_SOURCE),
-        "guardian": guardian_status(),
+        "guardian": probe("Guardian health", guardian_status),
+        "warnings": warnings,
     }
     if include_remote:
-        data["web_remote"] = remote_version(WEB_REPO)
-        data["helper_remote"] = remote_version(TTU_REPO)
-        data["remote_image_digest"] = remote_image_digest()
+        data["web_remote"] = probe("Web Manager remote version", lambda: remote_version(WEB_REPO))
+        data["helper_remote"] = probe("TTUHelper remote version", lambda: remote_version(TTU_REPO))
+        data["remote_image_digest"] = probe("remote image digest", remote_image_digest)
     return data
 
 
@@ -937,10 +1001,10 @@ async def http_exc(request: Request, exc: HTTPException):
 async def unhandled_exc(request: Request, exc: Exception):
     request_id=uuid.uuid4().hex[:12]
     LOGGER.exception("Unhandled Web Manager error request_id=%s path=%s", request_id, request.url.path)
-    return templates.TemplateResponse(
-        "error.html",
-        {"request":request,"user":None,"csrf":"","version":VERSION,"request_id":request_id},
+    return HTMLResponse(
+        _last_resort_error_html(request_id),
         status_code=500,
+        headers={"X-SNTalkBot-Request-ID": request_id},
     )
 
 
@@ -1074,9 +1138,23 @@ async def users_toggle(request: Request, user_id: int, csrf: str = Form(...)):
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     user=require_login(request)
+    page_warnings=[]
+    try:
+        instances=list_instances(user)
+    except Exception as exc:
+        LOGGER.exception("dashboard instance enumeration failed")
+        instances=[]
+        page_warnings.append(f"อ่านรายการ instance ไม่สำเร็จ ({type(exc).__name__})")
+    try:
+        system=system_status(False)
+        page_warnings.extend(system.get("warnings") or [])
+    except Exception as exc:
+        LOGGER.exception("dashboard system summary failed")
+        system={"helper_version":None,"docker_installed":False,"image":image_name(),"helper_installed":False,"warnings":[]}
+        page_warnings.append(f"อ่านสถานะระบบไม่สำเร็จ ({type(exc).__name__})")
     return templates.TemplateResponse("dashboard.html", {
-        "request": request, "user":user, "instances": list_instances(user), "system": system_status(False),
-        "csrf": csrf_token(request), "version": VERSION,
+        "request": request, "user":user, "instances": instances, "system": system,
+        "page_warnings":page_warnings, "csrf": csrf_token(request), "version": VERSION,
     })
 
 
@@ -1423,7 +1501,10 @@ def job_migrate(source: str, role: str, replace: bool, start_after: bool, dry_ru
     if dry_run:
         args.append("--dry-run")
     try:
+        role_label = {"full":"Full Bot", "player":"Player Bot", "manager":"Server Manager Bot"}[role]
         job_emit(f"ตรวจและย้าย TTMediaBot จาก {source_path}")
+        job_emit(f"ประเภทบอตที่เลือก: {role_label} ({role})")
+        job_emit("นโยบาย config: สร้างจาก SNTalkBot template ปัจจุบัน แล้วนำเข้าเฉพาะค่า TTMediaBot ที่รองรับและตรวจสอบผ่าน")
         stream_root(args, timeout=900)
         imported=[]
         if names.is_file():

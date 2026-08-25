@@ -1,3 +1,12 @@
+# Development Report — Web Manager 1.1.9 (Queue/Migration Recovery)
+
+- ยืนยันบั๊ก production bare Internal Server Error ยังต้องถือเป็น blocker; 1.1.9 ใช้ dashboard fault isolation + static last-resort Request ID boundary ที่ไม่พึ่ง Jinja/config/database
+- รองรับ workflow TTUHelper 1.5.3 ที่ตรวจและซ่อม config ของ instance ที่มี TTMediaBot migration marker โดยอัตโนมัติ
+- ไม่เปลี่ยน role migration: production รอบก่อนผู้ใช้เลือก Player จริง จึงไม่มี Full→Player bug
+- คง accessible Users disclosure, in-page Job dialog, stopped-only Delete, Guardian-safe self-update และ TeamTalk credential proof
+
+---
+
 # Development Report — Web Manager 1.1.8 (UX / 500 Resilience)
 
 ## Production evidence / issue

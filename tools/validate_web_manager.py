@@ -60,7 +60,7 @@ checks={
  'in-page accessible Job dialog':'<dialog id="job-dialog"' in base and 'data-job-form' in system_tpl and 'X-SNTalkBot-Job-Dialog' in app and 'job_created_response' in app and 'showModal()' in js and 'ปิดและกลับไปทำงานต่อ' in js,
  'Users page hides create form until requested':'data-disclosure-target="create-user-panel"' in users_tpl and 'id="create-user-panel" hidden' in users_tpl and 'aria-expanded="false"' in users_tpl,
  'dashboard isolates malformed instance/realtime data':'Normalize old/new/partial realtime payloads' in app and 'warnings=[]' in app and 'ข้อมูลบางส่วนของ instance นี้อ่านไม่สมบูรณ์' in dash_tpl,
- 'friendly 500 page has request id':'@app.exception_handler(Exception)' in app and 'request_id=uuid.uuid4()' in app and 'Request ID' in error_tpl,
+ 'last-resort 500 boundary is static and carries request id':'class LastResortErrorMiddleware' in app and '_last_resort_error_html' in app and 'X-SNTalkBot-Request-ID' in app and '@app.exception_handler(Exception)' in app and 'Request ID' in app,
  'realtime instance SSE':'/instances/{name}/live' in app and 'await asyncio.sleep(0.5)' in app and 'live-instance' in insttpl and 'container_running' in app and 'บอตหยุดอยู่ — ไม่มีข้อมูลสด' in js,
  'room/server realtime fields rendered':'room_users_online' in app and 'server_users_online' in app and 'live-room-users' in insttpl and 'live-server-users' in insttpl and 'admins_in_room_count' in app,
  'service does not run as root':'User=$SERVICE_USER' in installer and 'SERVICE_USER="${SNWEB_SERVICE_USER:-sntalkweb}"' in installer,
@@ -81,6 +81,7 @@ checks={
  'production does not require /opt/sntalkbot source':'SNWEB_BOT_SOURCE' not in app and 'SNWEB_BOT_SOURCE' not in bridge and 'SNWEB_BOT_SOURCE' not in installer and 'update-bot-source' not in app and 'update-bot-source' not in bridge,
  'config template comes from Docker image':'bot-config-template' in app and 'image_text("/app/config_default.ini")' in bridge and '["docker","run","--rm","--entrypoint","cat",image_name(),path]' in bridge,
  'migration template comes from Docker image':'TemporaryDirectory(prefix="snweb-migrate-")' in bridge and 'template.write_text(image_text("/app/config_default.ini")' in bridge,
+ 'migration role is explicit in job output':'ประเภทบอตที่เลือก:' in app and 'นโยบาย config:' in app,
  'CloudPanel loopback default':'BIND="${SNWEB_BIND:-127.0.0.1}"' in installer and 'PORT="${SNWEB_PORT:-28765}"' in installer,
  'normal-user nav hides privileged pages':"{% if user.role == 'superadmin' %}" in base and '/users' in base and '/system' in base,
  'admin list excludes bot explained':'ไม่รวมบัญชีของบอตเอง' in insttpl,
@@ -185,8 +186,23 @@ assert client2.get('/jobs/'+j2).status_code==200
 # One malformed migrated instance must not turn the whole dashboard into HTTP 500.
 bad=root/'brokenmigrate'; bad.mkdir(); (bad/'config.ini').write_text('[broken\\nvalue=x\\n'); mod.STORE.set_owner('brokenmigrate',admin['id'],'')
 r=client.get('/'); assert r.status_code==200 and 'brokenmigrate' in r.text and 'ข้อมูลบางส่วนของ instance นี้อ่านไม่สมบูรณ์' in r.text
+# A failing system probe is isolated as a warning instead of taking down /.
+orig_image_version=mod.bot_image_version
+def probe_boom(): raise RuntimeError('validator-probe-boom')
+mod.bot_image_version=probe_boom
+r=client.get('/'); assert r.status_code==200 and 'SNTalkBot image version: RuntimeError' in r.text
+mod.bot_image_version=orig_image_version
 partial=mod.normalize_live_payload({'room_users_online':1,'player':{'title':'เพลงทดสอบ'},'channel':None,'teamtalk_activity':None})
 assert partial['channel']=={'id':0,'name':''} and partial['teamtalk_activity']['speaking']==0 and partial['player']['queue']==[]
+# The normal FastAPI exception handler must return Thai HTML + Request ID.
+async def validator_boom(): raise RuntimeError('validator-route-boom')
+mod.app.add_api_route('/__validator_boom', validator_boom, methods=['GET'])
+no_raise=TestClient(mod.app, raise_server_exceptions=False)
+r=no_raise.get('/__validator_boom'); assert r.status_code==500 and 'Request ID:' in r.text and r.headers.get('x-sntalkbot-request-id')
+# The outer pure-ASGI boundary must work even if failure is outside routing/Jinja/session.
+async def bare_boom(scope, receive, send): raise RuntimeError('validator-asgi-boom')
+boundary_client=TestClient(mod.LastResortErrorMiddleware(bare_boom), raise_server_exceptions=False)
+r=boundary_client.get('/'); assert r.status_code==500 and 'Request ID:' in r.text and r.headers.get('x-sntalkbot-request-id')
 print('FUNCTIONAL_OK')
 """ % str(root)
         proc=subprocess.run([sys.executable,'-c',test_code],env=env,capture_output=True,text=True,timeout=30)
@@ -280,6 +296,9 @@ expected=[
 flat=[c[1] for c in calls if c[0]=='stream']+[c[1] for c in calls if c[0]=='root']
 for want in expected:
     assert any(tuple(row[:len(want)])==want for row in flat), (want,flat)
+# Migration role selected in the form must cross Web Manager/root bridge unchanged.
+migration_calls=[row for row in flat if row and row[0]=='migrate-ttmediabot']
+assert any(len(row)>=3 and row[2]=='full' for row in migration_calls), migration_calls
 # A stopped container must never surface a fresh-looking runtime_status fallback.
 (mod.bots_root()/'actionbot'/'runtime_status.json').write_text('{"updated_epoch":9999999999,"users_online":99,"player":{"title":"stale"}}')
 rows=mod.list_instances(); assert next(x for x in rows if x['name']=='actionbot')['runtime'] is None

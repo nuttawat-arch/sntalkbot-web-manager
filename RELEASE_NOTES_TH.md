@@ -1,3 +1,12 @@
+# SNTalkBot Web Manager 1.1.9 — Dashboard Recovery / Migration Repair Integration
+
+- คง Users list-first และ Job dialog ในหน้าเดิมจาก 1.1.8
+- เพิ่ม last-resort/fault-isolation รอบ Dashboard ต่อเนื่องเพื่อไม่ให้ config/realtime ของ instance ที่ migrate ตัวเดียวลากทั้งหน้าเว็บลง
+- หน้า System แสดง TTUHelper รุ่นใหม่และ workflow อัปเดต helper เพื่อซ่อม config ที่ migrate มาแล้วอัตโนมัติ
+- คู่มือผู้ใช้ยังเน้นงานที่ผู้ใช้ต้องทำจริง; Reverse Proxy ใช้ upstream 127.0.0.1:28765 โดยไม่อธิบาย implementation ภายในเกินจำเป็น
+
+---
+
 # SNTalkBot Web Manager 1.1.8 — Web UX / Dashboard Resilience
 
 - หน้า **บัญชีผู้ใช้** แสดงรายชื่อก่อน และซ่อนฟอร์มสร้างบัญชีจนกด “สร้างบัญชีผู้ใช้”; เปิด/ปิดแบบ disclosure พร้อมย้ายโฟกัสให้โปรแกรมอ่านหน้าจอ
