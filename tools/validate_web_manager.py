@@ -59,6 +59,7 @@ checks={
  'realtime jobs':'StreamingResponse' in app and '/jobs/{jid}/stream' in app and 'EventSource' in js and 'data-job-id' in jobtpl,
  'in-page accessible Job dialog':'<dialog id="job-dialog"' in base and 'data-job-form' in system_tpl and 'X-SNTalkBot-Job-Dialog' in app and 'job_created_response' in app and 'showModal()' in js and 'ปิดและกลับไปทำงานต่อ' in js,
  'Job dialog endpoint is immune to form action DOM clobbering':'fetch(form.action' not in js and "form.getAttribute('action')" in js and 'new URL(actionAttr, document.baseURI).href' in js and 'name="action"' in system_tpl,
+ 'static JS/CSS URLs are cache-busted by Web Manager version':'/static/app.js?v={{ version }}' in base and '/static/style.css?v={{ version }}' in base and 'src="/static/app.js"' not in base and 'href="/static/style.css"' not in base,
  'Users page hides create form until requested':'data-disclosure-target="create-user-panel"' in users_tpl and 'id="create-user-panel" hidden' in users_tpl and 'aria-expanded="false"' in users_tpl,
  'dashboard isolates malformed instance/realtime data':'Normalize old/new/partial realtime payloads' in app and 'warnings=[]' in app and 'ข้อมูลบางส่วนของ instance นี้อ่านไม่สมบูรณ์' in dash_tpl,
  'last-resort 500 boundary is static and carries request id':'class LastResortErrorMiddleware' in app and '_last_resort_error_html' in app and 'X-SNTalkBot-Request-ID' in app and '@app.exception_handler(Exception)' in app and 'Request ID' in app,

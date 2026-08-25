@@ -1,3 +1,10 @@
+# SNTalkBot Web Manager 1.1.11 — Static Asset Cache-Bust Fix
+
+- เพิ่ม version query ให้ `/static/app.js` และ `/static/style.css` เพื่อบังคับ browser โหลด asset ของ release ใหม่หลังอัปเดต backend
+- ปิดกรณี production HTML เป็นรุ่นใหม่ แต่ browser ยังรัน JavaScript เก่าที่ส่ง `POST /[object RadioNodeList]` และได้ HTTP 404
+- คง DOM-clobber fix ของ 1.1.10: Job dialog อ่าน endpoint ด้วย `getAttribute("action")` ไม่ใช้ `form.action`
+- เพิ่ม validator gate ห้าม static JS/CSS กลับไปเป็น URL ที่ไม่มี release version
+
 # SNTalkBot Web Manager 1.1.10 — Job Dialog Action Routing Fix
 
 - แก้ production HTTP 404 ของ Job dialog เมื่อกด action ในหน้า System เช่น “อัปเดต TTUHelper + install”

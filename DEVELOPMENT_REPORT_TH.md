@@ -1,3 +1,14 @@
+# Development Report — Web Manager 1.1.11 (Static Cache Coherency)
+
+## Production evidence
+- production log พบ `POST /[object%20RadioNodeList] ... 404` จาก JavaScript เก่าก่อน 1.1.10 ถูกติดตั้ง
+- หลัง backend เปลี่ยนเป็น 1.1.10 HTML แสดงเวอร์ชันใหม่ได้ แต่ static asset URL เดิมไม่มี version จึงมีโอกาสที่ browser/session เดิมถือ `app.js` เก่าไว้
+
+## Fix
+- `base.html` เปลี่ยนเป็น `/static/app.js?v={{ version }}` และ `/static/style.css?v={{ version }}`
+- release ใหม่จึงเปลี่ยน asset URL อัตโนมัติและไม่พึ่งผู้ใช้ล้าง cache ด้วยมือ
+- validator บังคับทั้ง DOM-clobber-safe endpoint และ versioned static assets
+
 # Development Report — Web Manager 1.1.10 (Job Dialog DOM-clobber Fix)
 
 ## Production evidence
