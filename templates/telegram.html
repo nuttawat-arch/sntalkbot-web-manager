@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Telegram ส่วนกลาง — SNTalkBot Web Manager{% endblock %}
+{% block content %}
+<h2>Telegram ส่วนกลาง</h2>
+<p>ตั้ง Telegram Bot Token กลางสำหรับ SNTalkBot ทุก instance โดยไม่ต้องคัดลอก token ลง config.ini ทีละบอต ค่า token ถูกเก็บบนเครื่อง Linux แบบ root-only และหน้านี้จะไม่แสดง token เดิมกลับออกมา</p>
+{% if telegram.error %}<p class="warning" role="alert">{{ telegram.error }}</p>{% endif %}
+<p role="status">สถานะ Bot Token: <strong>{% if telegram.configured %}ตั้งค่าแล้ว{% else %}ยังไม่ได้ตั้งค่า{% endif %}</strong></p>
+<p>TTUHelper ที่ติดตั้ง: <strong>{{ helper_version or 'ไม่ทราบรุ่น' }}</strong> — การส่งค่ากลางเข้า container ต้องใช้ TTUHelper 1.5.7 ขึ้นไป</p>
+<form method="post" action="/telegram">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<label for="central-telegram-token"><strong>Telegram Bot Token ส่วนกลาง</strong></label>
+<p id="telegram-token-help" class="minor">วาง token ใหม่เมื่อต้องการเปลี่ยน; เว้นว่างเพื่อคง token เดิม หน้านี้ไม่อ่าน token ปัจจุบันกลับมาแสดง</p>
+<input id="central-telegram-token" name="token" type="password" aria-describedby="telegram-token-help" autocomplete="off" placeholder="{% if telegram.configured %}ตั้งค่าอยู่ — เว้นว่างเพื่อคงเดิม{% else %}ยังว่าง{% endif %}">
+<label><input type="checkbox" name="clear_token" value="1"> ล้าง Bot Token ส่วนกลาง</label>
+
+<label for="central-telegram-chat"><strong>Default Chat ID ส่วนกลาง</strong></label>
+<p id="telegram-chat-help" class="minor">ใช้เป็นห้อง/ผู้ดูแลปลายทางเริ่มต้นสำหรับ notification ที่ต้องการค่า default; เว้นว่างได้</p>
+<input id="central-telegram-chat" name="default_chat_id" aria-describedby="telegram-chat-help" value="{{ telegram.default_chat_id }}">
+
+<label><input type="checkbox" name="apply_running" value="1" checked> ใช้ค่ากับบอตที่กำลังรันทันที</label>
+<p class="minor">ถ้าเปิด ระบบจะ recreate เฉพาะ container ที่กำลังรันผ่าน TTUHelper โดยรักษา config, SQLite, queue และข้อมูลถาวรเดิม</p>
+<button type="submit">บันทึก Telegram ส่วนกลาง</button>
+</form>
+<h3>ค่าเฉพาะ instance เดิม</h3>
+<p class="minor">ช่อง <code>[telegram] telegram_bot_token</code> และ <code>default_chat_id</code> ใน config ของแต่ละบอตยังคงอยู่เพื่อ compatibility และใช้เป็น fallback เมื่อไม่ได้ตั้งค่าส่วนกลาง</p>
+{% endblock %}

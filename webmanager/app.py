@@ -224,8 +224,8 @@ def root_run(args, *, timeout=120, check=False):
 def root_run_stdin(args, payload: dict, *, timeout=45, check=False):
     """Call the privileged bridge with secret-bearing JSON on stdin only.
 
-    This is used for one-shot TeamTalk credential verification. Passwords never
-    enter argv, persisted job metadata/output, config.ini, or the user database.
+    TeamTalk verification passwords and central Telegram tokens use this path so
+    secrets never enter argv or persisted Web Manager job metadata/output.
     """
     cmd = ["sudo", "-n", str(ROOT_BRIDGE), *[str(x) for x in args]]
     proc = subprocess.run(
@@ -545,12 +545,14 @@ def _global_broadcast_tick(now=None):
         state = STORE.global_broadcast_state(path.name)
         if now - float(state.get("last_sent") or 0.0) < interval * 60:
             continue
-        message = STORE.next_global_broadcast_message(state.get("last_message_id") or 0)
+        message = STORE.prepare_random_global_broadcast_message(path.name)
         if not message:
             continue
         if bot_api_global_broadcast(path, message["message"]):
             STORE.set_global_broadcast_state(
-                path.name, last_sent=now, last_message_id=int(message["id"])
+                path.name, last_sent=now, last_message_id=int(message["id"]),
+                remaining_ids=message["remaining_ids_after"],
+                cycle_ids=message["cycle_ids_after"],
             )
             _GLOBAL_BROADCAST_RETRY_AFTER.pop(path.name, None)
             delivered += 1
@@ -1052,6 +1054,8 @@ def create_instance(values: dict):
 
 
 CONFIG_ENUMS = {
+    ("bot", "language"): [("ไทย", "th"), ("English", "en"), ("العربية", "ar"), ("العربية - مصر", "ar_EG"), ("Português", "pt")],
+    ("bot", "welcome_mode"): [("ปิด", "0"), ("เปิด", "1")],
     ("bot", "gender"): [("ชาย", "0"), ("หญิง", "256"), ("เป็นกลาง", "4096")],
     ("bot", "char_limit_mode"): [("Kick ผู้ใช้", "1"), ("Ban ผู้ใช้", "2")],
     ("bot", "blacklist_mode"): [("Kick ผู้ใช้", "1"), ("Ban ผู้ใช้", "2")],
@@ -1084,7 +1088,11 @@ CONFIG_LABELS = {
     "telegram_enabled": "แจ้งเวอร์ชันผ่าน Telegram",
     "polling_fallback": "ใช้การตรวจ GitHub แบบ polling เป็น fallback",
     "interval_minutes": "ช่วงเวลาส่ง Global Broadcast (นาที)",
+    "is_stereo_wide": "Stereo 3D 1 — Stereo Widen",
+    "is_stereo_echo": "Stereo 3D 2 — Extra Stereo",
+    "is_bass_boosted": "Bass Boost",
 }
+
 
 CONFIG_DESCRIPTIONS = {
     ("bot", "default_channel"): "ใส่ TeamTalk Channel ID เช่น 8 หรือค่าที่คัดลอกจาก gcid/cid ได้โดยตรง; หากใช้ชื่อห้องให้ใช้พาธแบบเดิม เช่น /music",
@@ -1104,7 +1112,12 @@ CONFIG_DESCRIPTIONS = {
     ("global_broadcast", "enabled"): "Manager/Full เท่านั้น: เปิดรับข้อความส่วนกลางจากฐานข้อมูล Web Manager; ค่าเริ่มต้นปิด",
     ("global_broadcast", "interval_minutes"): "กำหนดความถี่ของบอตนี้ 1-10080 นาที; ข้อความส่วนกลางแก้ไขได้จากเมนู Global Broadcast",
     ("global_broadcast", "tts_enabled"): "ใช้ข้อความ Central Global Broadcast ชุดเดียวกัน แต่ให้บอตพูดข้อความนั้นด้วย TTS ในห้องของบอต; ไม่มี messages.txt หรือ scheduler ข้อความชุดที่สอง",
+    ("bot", "language"): "เลือกภาษาหลักจาก locale ที่ SNTalkBot มีอยู่จริง แทนการพิมพ์รหัสภาษาเอง",
+    ("playback", "is_stereo_wide"): "ตรงกับคำสั่ง 3d: ใช้ FFmpeg Stereo Widen รุ่นปัจจุบันผ่าน mpv/libavfilter",
+    ("playback", "is_stereo_echo"): "ตรงกับคำสั่ง 3d2: Extra Stereo เพิ่มความต่างซ้าย/ขวา; คงชื่อ key เดิมเพื่อ compatibility แต่เอฟเฟ็กต์ไม่ใช่ Echo",
+    ("playback", "is_bass_boosted"): "ตรงกับคำสั่ง bass: Bass/Lowshelf แบบลดความเสี่ยง clipping จาก preset เก่า",
 }
+
 
 
 def _field_kind(section, key, value):
@@ -1500,6 +1513,77 @@ async def users_toggle(request: Request, user_id: int, csrf: str = Form(...)):
     return RedirectResponse("/users",status_code=303)
 
 
+def central_telegram_status():
+    rc, out = root_run(["central-telegram-status"], timeout=10)
+    if rc != 0:
+        return {"configured": False, "default_chat_id": "", "error": "อ่านการตั้งค่า Telegram ส่วนกลางไม่สำเร็จ"}
+    try:
+        data = json.loads((out or "").strip().splitlines()[-1])
+    except Exception:
+        return {"configured": False, "default_chat_id": "", "error": "รูปแบบสถานะ Telegram ส่วนกลางไม่ถูกต้อง"}
+    return {
+        "configured": bool(data.get("configured")),
+        "default_chat_id": str(data.get("default_chat_id") or ""),
+        "error": None,
+    }
+
+
+def _version_at_least(value, minimum):
+    try:
+        left = tuple(int(x) for x in str(value or "0").split("."))
+        right = tuple(int(x) for x in str(minimum).split("."))
+        width = max(len(left), len(right))
+        return left + (0,) * (width - len(left)) >= right + (0,) * (width - len(right))
+    except Exception:
+        return False
+
+
+def job_apply_central_telegram(payload: dict, apply_running: bool):
+    rc, out = root_run_stdin(["central-telegram-set"], payload, timeout=20, check=False)
+    try:
+        data = json.loads((out or "").strip().splitlines()[-1])
+    except Exception:
+        data = {}
+    if rc != 0 or not data.get("ok"):
+        raise RuntimeError(str(data.get("error") or "บันทึก Telegram ส่วนกลางไม่สำเร็จ"))
+    job_emit("[OK] บันทึก Telegram ส่วนกลางแบบ root-only แล้ว; token ไม่ถูกแสดงในผลลัพธ์")
+    if not apply_running:
+        job_emit("ยังไม่ได้ Restart บอตที่กำลังรัน; ค่าใหม่จะมีผลเมื่อบอตถูกสร้าง/Restart ครั้งถัดไป")
+        return
+    hv = helper_version()
+    if not _version_at_least(hv, "1.5.7"):
+        job_emit(f"[WARNING] TTUHelper {hv or 'unknown'} ยังเก่ากว่า 1.5.7; อัปเดต TTUHelper แล้วกดอัปเดตบอตที่กำลังรันเพื่อให้ค่า Telegram ส่วนกลางเข้า container")
+        return
+    job_emit("กำลังใช้ค่า Telegram ส่วนกลางกับบอตที่กำลังรัน โดยรักษา config/SQLite/queue เดิม")
+    stream_root(["helper", "update"], timeout=1800)
+
+
+@app.get("/telegram", response_class=HTMLResponse)
+def central_telegram_page(request: Request):
+    user = require_superadmin(request)
+    return templates.TemplateResponse("telegram.html", {
+        "request": request, "user": user, "telegram": central_telegram_status(),
+        "helper_version": helper_version(), "csrf": csrf_token(request), "version": VERSION,
+    })
+
+
+@app.post("/telegram")
+async def central_telegram_save(
+    request: Request, csrf: str = Form(...), token: str = Form(""),
+    default_chat_id: str = Form(""), clear_token: str | None = Form(None),
+    apply_running: str | None = Form(None),
+):
+    user = require_superadmin(request); check_csrf(request, csrf)
+    payload = {"default_chat_id": str(default_chat_id or "").strip(), "clear_token": bool(clear_token)}
+    if str(token or "").strip():
+        payload["token"] = str(token).strip()
+    jid = jobs.create(
+        "บันทึก Telegram ส่วนกลาง", job_apply_central_telegram, payload, bool(apply_running),
+        owner_user_id=int(user["id"]), kind="central-telegram",
+    )
+    return job_created_response(request, jid, "/telegram")
+
+
 @app.get("/broadcasts", response_class=HTMLResponse)
 def global_broadcasts_page(request: Request):
     user = require_superadmin(request)
@@ -1511,10 +1595,31 @@ def global_broadcasts_page(request: Request):
 
 
 @app.post("/broadcasts")
-async def global_broadcasts_create(request: Request, csrf: str = Form(...), message: str = Form(...), enabled: str | None = Form(None)):
+async def global_broadcasts_create(request: Request):
+    require_superadmin(request)
+    form = await request.form()
+    check_csrf(request, str(form.get("csrf") or ""))
+    messages = [str(value or "").strip() for value in form.getlist("message")]
+    messages = [message for message in messages if message]
+    try:
+        STORE.create_global_broadcast_messages(messages, enabled=bool(form.get("enabled")))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return RedirectResponse("/broadcasts", status_code=303)
+
+
+@app.post("/broadcasts/bulk")
+async def global_broadcasts_legacy_bulk_create(
+    request: Request, csrf: str = Form(...), messages: str = Form(...), enabled: str | None = Form(None)
+):
+    """Compatibility endpoint for the short-lived 1.1.18 form.
+
+    One textarea is now always one message, including its line breaks.  This
+    deliberately stops the old line-splitting interpretation.
+    """
     require_superadmin(request); check_csrf(request, csrf)
     try:
-        STORE.create_global_broadcast_message(message, enabled=bool(enabled))
+        STORE.create_global_broadcast_message(messages, enabled=bool(enabled))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return RedirectResponse("/broadcasts", status_code=303)

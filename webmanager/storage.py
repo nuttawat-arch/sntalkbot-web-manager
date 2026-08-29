@@ -3,11 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import hmac
+import json
 from pathlib import Path
 import secrets
 import sqlite3
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class Store:
@@ -74,8 +75,15 @@ class Store:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS global_broadcast_state ("
                 "instance_name TEXT PRIMARY KEY,last_sent REAL NOT NULL DEFAULT 0,"
-                "last_message_id INTEGER NOT NULL DEFAULT 0)"
+                "last_message_id INTEGER NOT NULL DEFAULT 0,"
+                "remaining_ids TEXT NOT NULL DEFAULT '[]',"
+                "cycle_ids TEXT NOT NULL DEFAULT '[]')"
             )
+            state_cols = {str(row[1]) for row in db.execute("PRAGMA table_info(global_broadcast_state)").fetchall()}
+            if "remaining_ids" not in state_cols:
+                db.execute("ALTER TABLE global_broadcast_state ADD COLUMN remaining_ids TEXT NOT NULL DEFAULT '[]'")
+            if "cycle_ids" not in state_cols:
+                db.execute("ALTER TABLE global_broadcast_state ADD COLUMN cycle_ids TEXT NOT NULL DEFAULT '[]'")
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             db.execute("COMMIT")
         except Exception:
@@ -132,6 +140,34 @@ class Store:
             )
             return int(cur.lastrowid)
 
+    def create_global_broadcast_messages(self, messages, *, enabled=True):
+        """Create multiple independent rotation messages in one transaction.
+
+        Each input item becomes its own row.  This is intentionally different
+        from a single message containing newlines, so 20+ short announcements
+        rotate one by one instead of being sent as one large block.
+        """
+        cleaned = [str(message or "").strip() for message in messages]
+        cleaned = [message for message in cleaned if message]
+        if not cleaned:
+            raise ValueError("at least one message is required")
+        if len(cleaned) > 100:
+            raise ValueError("a maximum of 100 messages can be added at once")
+        for message in cleaned:
+            if len(message.encode("utf-8")) > 12000:
+                raise ValueError("one or more messages are too long")
+        now = datetime.now(timezone.utc).isoformat()
+        ids = []
+        with self.connect() as db:
+            position = int(db.execute("SELECT COALESCE(MAX(position),0)+1 FROM global_broadcast_messages").fetchone()[0])
+            for offset, message in enumerate(cleaned):
+                cur = db.execute(
+                    "INSERT INTO global_broadcast_messages(message,enabled,position,created_at,updated_at) VALUES(?,?,?,?,?)",
+                    (message, 1 if enabled else 0, position + offset, now, now),
+                )
+                ids.append(int(cur.lastrowid))
+        return ids
+
     def update_global_broadcast_message(self, message_id: int, *, message=None, enabled=None):
         row = None
         with self.connect() as db:
@@ -155,33 +191,117 @@ class Store:
             cur = db.execute("DELETE FROM global_broadcast_messages WHERE id=?", (int(message_id),))
             return cur.rowcount > 0
 
+    @staticmethod
+    def _decode_broadcast_ids(raw):
+        try:
+            values = json.loads(str(raw or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        if not isinstance(values, list):
+            return []
+        result = []
+        seen = set()
+        for value in values:
+            try:
+                ident = int(value)
+            except (TypeError, ValueError):
+                continue
+            if ident > 0 and ident not in seen:
+                seen.add(ident)
+                result.append(ident)
+        return result
+
     def global_broadcast_state(self, instance_name: str):
         with self.connect() as db:
             row = db.execute(
-                "SELECT instance_name,last_sent,last_message_id FROM global_broadcast_state WHERE instance_name=?",
+                "SELECT instance_name,last_sent,last_message_id,remaining_ids,cycle_ids "
+                "FROM global_broadcast_state WHERE instance_name=?",
                 (str(instance_name),),
             ).fetchone()
-        return dict(row) if row else {"instance_name":str(instance_name),"last_sent":0.0,"last_message_id":0}
+        if not row:
+            return {
+                "instance_name": str(instance_name), "last_sent": 0.0, "last_message_id": 0,
+                "remaining_ids": [], "cycle_ids": [],
+            }
+        result = dict(row)
+        result["remaining_ids"] = self._decode_broadcast_ids(result.get("remaining_ids"))
+        result["cycle_ids"] = self._decode_broadcast_ids(result.get("cycle_ids"))
+        return result
 
-    def set_global_broadcast_state(self, instance_name: str, *, last_sent: float, last_message_id: int):
+    def set_global_broadcast_state(
+        self, instance_name: str, *, last_sent: float, last_message_id: int,
+        remaining_ids=None, cycle_ids=None,
+    ):
+        name = str(instance_name)
         with self.connect() as db:
+            existing = db.execute(
+                "SELECT remaining_ids,cycle_ids FROM global_broadcast_state WHERE instance_name=?",
+                (name,),
+            ).fetchone()
+            if remaining_ids is None:
+                remaining_ids = self._decode_broadcast_ids(existing["remaining_ids"] if existing else "[]")
+            if cycle_ids is None:
+                cycle_ids = self._decode_broadcast_ids(existing["cycle_ids"] if existing else "[]")
+            remaining_json = json.dumps([int(x) for x in remaining_ids], separators=(",", ":"))
+            cycle_json = json.dumps([int(x) for x in cycle_ids], separators=(",", ":"))
             db.execute(
-                "INSERT INTO global_broadcast_state(instance_name,last_sent,last_message_id) VALUES(?,?,?) "
-                "ON CONFLICT(instance_name) DO UPDATE SET last_sent=excluded.last_sent,last_message_id=excluded.last_message_id",
-                (str(instance_name),float(last_sent),int(last_message_id)),
+                "INSERT INTO global_broadcast_state(instance_name,last_sent,last_message_id,remaining_ids,cycle_ids) "
+                "VALUES(?,?,?,?,?) "
+                "ON CONFLICT(instance_name) DO UPDATE SET last_sent=excluded.last_sent,"
+                "last_message_id=excluded.last_message_id,remaining_ids=excluded.remaining_ids,cycle_ids=excluded.cycle_ids",
+                (name, float(last_sent), int(last_message_id), remaining_json, cycle_json),
             )
 
-    def next_global_broadcast_message(self, after_id=0):
-        with self.connect() as db:
-            row = db.execute(
-                "SELECT id,message,enabled,position FROM global_broadcast_messages "
-                "WHERE enabled=1 AND id>? ORDER BY position,id LIMIT 1", (int(after_id or 0),)
-            ).fetchone()
-            if row is None:
-                row = db.execute(
-                    "SELECT id,message,enabled,position FROM global_broadcast_messages WHERE enabled=1 ORDER BY position,id LIMIT 1"
-                ).fetchone()
-        return dict(row) if row else None
+    def prepare_random_global_broadcast_message(self, instance_name: str, *, rng=None):
+        """Choose one enabled message without replacement for the current cycle.
+
+        The returned bag state is committed only after delivery succeeds.  Each
+        instance therefore gets its own persistent random-without-replacement
+        cycle: no delivered message repeats until every currently enabled
+        message has been delivered once.
+        """
+        chooser = rng or secrets.SystemRandom()
+        state = self.global_broadcast_state(instance_name)
+        rows = self.list_global_broadcast_messages(enabled_only=True)
+        if not rows:
+            return None
+        by_id = {int(row["id"]): row for row in rows}
+        active_ids = list(by_id)
+        active = set(active_ids)
+
+        cycle_ids = [ident for ident in state.get("cycle_ids", []) if ident in active]
+        remaining_ids = [ident for ident in state.get("remaining_ids", []) if ident in active]
+        cycle_set = set(cycle_ids)
+        remaining_set = set(remaining_ids)
+
+        # Messages enabled/created during a cycle join the same central pool and
+        # become eligible immediately, without re-adding messages already sent.
+        for ident in active_ids:
+            if ident not in cycle_set:
+                cycle_ids.append(ident)
+                cycle_set.add(ident)
+                remaining_ids.append(ident)
+                remaining_set.add(ident)
+
+        if not remaining_ids:
+            # The previous random bag is complete. Start a fresh cycle containing
+            # every enabled message. Avoid an immediate boundary repeat when there
+            # is more than one choice, while remaining random otherwise.
+            cycle_ids = list(active_ids)
+            remaining_ids = list(active_ids)
+            choices = list(remaining_ids)
+            last_id = int(state.get("last_message_id") or 0)
+            if len(choices) > 1 and last_id in choices:
+                choices.remove(last_id)
+        else:
+            choices = list(remaining_ids)
+
+        chosen_id = int(chooser.choice(choices))
+        remaining_after = [ident for ident in remaining_ids if ident != chosen_id]
+        result = dict(by_id[chosen_id])
+        result["remaining_ids_after"] = remaining_after
+        result["cycle_ids_after"] = cycle_ids
+        return result
 
     @staticmethod
     def _hash(password: str, salt: bytes) -> bytes:

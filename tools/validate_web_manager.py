@@ -23,6 +23,7 @@ insttpl=(root/'templates/instance.html').read_text(encoding='utf-8')
 jobtpl=(root/'templates/job.html').read_text(encoding='utf-8')
 configtpl=(root/'templates/config.html').read_text(encoding='utf-8')
 broadcasttpl=(root/'templates/broadcasts.html').read_text(encoding='utf-8')
+telegramtpl=(root/'templates/telegram.html').read_text(encoding='utf-8')
 storage=(root/'webmanager/storage.py').read_text(encoding='utf-8')
 password_tool=(root/'webmanager/password_tool.py').read_text(encoding='utf-8')
 js=(root/'static/app.js').read_text(encoding='utf-8')
@@ -55,9 +56,13 @@ checks={
  'TeamTalk verification password is stdin-only and non-persistent':'input=json.dumps(payload, ensure_ascii=False)' in app and 'sys.stdin.buffer.read' in bridge and '"docker","run","--rm","-i"' in bridge and 'verify_teamtalk_password' not in storage,
  'Linux lowercase instance rule':'NEW_BOT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,62}$")' in app and 'pattern="[a-z0-9][a-z0-9_.-]{0,62}"' in newtpl,
  'config all sections':'config_for_form' in app and 'save_config_form' in app,
- 'central Global Broadcast uses SQLite + loopback API scheduler':'SCHEMA_VERSION = 3' in storage and 'global_broadcast_messages' in storage and 'global_broadcast_state' in storage and 'def _global_broadcast_tick' in app and '/v1/events/global-broadcast' in app and 'bot_api_global_broadcast' in app and '@app.on_event("startup")' in app and 'tts_enabled' in app,
+ 'central Global Broadcast uses SQLite + loopback API scheduler':'SCHEMA_VERSION = 4' in storage and 'global_broadcast_messages' in storage and 'global_broadcast_state' in storage and 'def _global_broadcast_tick' in app and '/v1/events/global-broadcast' in app and 'bot_api_global_broadcast' in app and '@app.on_event("startup")' in app and 'tts_enabled' in app,
  'Global Broadcast is Manager/Full-only and interval bounded':'server_management_enabled' in app and 'global_broadcast' in app and 'interval_minutes' in app and '10080' in app and '_GLOBAL_BROADCAST_RETRY_AFTER' in app,
  'Super Admin can manage central broadcast messages':'@app.get("/broadcasts"' in app and '@app.post("/broadcasts")' in app and 'require_superadmin(request)' in app and 'ข้อความ Global Broadcast' in broadcasttpl and 'href="/broadcasts"' in base,
+ 'Global Broadcast composer uses one multiline textarea per message':'data-add-broadcast-message' in broadcasttpl and 'name="message"' in broadcasttpl and 'หนึ่งช่องคือหนึ่งข้อความ' in broadcasttpl and 'data-broadcast-message-fields' in js and 'form.getlist("message")' in app,
+ 'Global Broadcast uses persistent random-without-replacement bags':'prepare_random_global_broadcast_message' in storage and 'remaining_ids' in storage and 'cycle_ids' in storage and 'secrets.SystemRandom()' in storage and 'remaining_ids=message["remaining_ids_after"]' in app and 'ไม่ส่งข้อความเดิมซ้ำก่อนครบชุด' in broadcasttpl,
+ 'central Telegram token is root-only and stdin-only':'@app.get("/telegram"' in app and '@app.post("/telegram")' in app and 'central-telegram-set' in bridge and 'CENTRAL_TELEGRAM_ENV = Path("/etc/sntalkbot-telegram.env")' in bridge and 'os.chmod(temp_name, 0o600)' in bridge and 'root_run_stdin(["central-telegram-set"]' in app and 'href="/telegram"' in base and 'type="password"' in telegramtpl,
+ 'config categorical controls expose language and welcome mode as choices':'("bot", "language")' in app and '("bot", "welcome_mode")' in app and 'return "choice"' in app,
  'legacy configs gain disabled Global Broadcast defaults':'_ensure_web_managed_config_defaults' in app and 'random_message_interval' in app and 'random_broadcast_enabled' in app and 'cfg.remove_option("bot", "random_message_interval")' in app and 'cfg.remove_option("tts", "random_broadcast_enabled")' in app and 'cfg.set("global_broadcast", "enabled", "False")' in app and 'tts_enabled' in app,
  'config save applies running changes through TTUHelper restart':'kind="config-restart"' in app and 'job_helper_action, "restart", name' in app and 'docker_container(name)' in app,
  'new-instance channel field accepts ID or historical path':'Channel ID หรือ Channel path' in newtpl and 'gcid/cid' in newtpl and 'เช่น /music' in newtpl,
@@ -155,21 +160,38 @@ try:
         spec=__import__('importlib.util').util.spec_from_file_location('_snweb_storage_validation', root/'webmanager/storage.py')
         smod=__import__('importlib.util').util.module_from_spec(spec); spec.loader.exec_module(smod)
         store=smod.Store(Path(td)/'webmanager.db')
-        first=store.create_global_broadcast_message('ข้อความหนึ่ง', enabled=True)
-        second=store.create_global_broadcast_message('ข้อความสอง', enabled=True)
-        assert [r['id'] for r in store.list_global_broadcast_messages(enabled_only=True)]==[first,second]
-        assert store.next_global_broadcast_message(0)['id']==first
-        assert store.next_global_broadcast_message(first)['id']==second
-        assert store.next_global_broadcast_message(second)['id']==first
-        assert store.update_global_broadcast_message(first,message='ข้อความหนึ่งแก้ไข',enabled=False)
-        assert store.next_global_broadcast_message(0)['id']==second
-        store.set_global_broadcast_state('manager-a',last_sent=123.5,last_message_id=second)
-        # Re-open through a fresh Store instance to prove persistence rather than RAM-only state.
+        import random
+        ids=store.create_global_broadcast_messages(
+            [f'ข้อความ {i}\nhttps://example.test/{i}' for i in range(1,21)], enabled=True
+        )
+        rng=random.Random(51617)
+        delivered=[]
+        for step in range(5):
+            item=store.prepare_random_global_broadcast_message('manager-a',rng=rng)
+            assert item and item['id'] not in delivered
+            delivered.append(item['id'])
+            store.set_global_broadcast_state(
+                'manager-a',last_sent=100.0+step,last_message_id=item['id'],
+                remaining_ids=item['remaining_ids_after'],cycle_ids=item['cycle_ids_after'],
+            )
+        later=store.create_global_broadcast_messages(['เพิ่มภายหลัง A','เพิ่มภายหลัง B'],enabled=True)
+        all_ids=ids+later
+        while len(delivered)<len(all_ids):
+            item=store.prepare_random_global_broadcast_message('manager-a',rng=rng)
+            assert item and item['id'] not in delivered
+            delivered.append(item['id'])
+            store.set_global_broadcast_state(
+                'manager-a',last_sent=100.0+len(delivered),last_message_id=item['id'],
+                remaining_ids=item['remaining_ids_after'],cycle_ids=item['cycle_ids_after'],
+            )
+        assert set(delivered)==set(all_ids) and delivered!=all_ids and delivered!=list(reversed(all_ids))
+        next_item=store.prepare_random_global_broadcast_message('manager-a',rng=rng)
+        assert next_item and next_item['id']!=delivered[-1]
         store2=smod.Store(Path(td)/'webmanager.db')
         state=store2.global_broadcast_state('manager-a')
-        assert state['last_sent']==123.5 and state['last_message_id']==second
-        assert store2.delete_global_broadcast_message(first)
-        need(True,'central Global Broadcast messages, rotation and per-instance schedule state persist in SQLite')
+        assert state['last_message_id']==delivered[-1] and isinstance(state['remaining_ids'],list)
+        assert '\nhttps://example.test/' in store2.list_global_broadcast_messages()[0]['message']
+        need(True,'central Global Broadcast multiline messages and per-instance random-without-replacement cycle persist in SQLite')
 except Exception as exc:
     need(False,f'central Global Broadcast SQLite runtime test: {exc!r}')
 
@@ -202,8 +224,11 @@ m=re.search(r'name=\"csrf\" value=\"([^\"]+)\"',r.text); assert m
 csrf=m.group(1)
 # Central Global Broadcast CRUD is Super Admin-only and persists immediately.
 r=client.get('/broadcasts'); assert r.status_code==200 and 'ข้อความ Global Broadcast ส่วนกลาง' in r.text
-r=client.post('/broadcasts',data={'csrf':csrf,'message':'ประกาศส่วนกลางทดสอบ','enabled':'1'},follow_redirects=False); assert r.status_code==303
-rows=mod.STORE.list_global_broadcast_messages(); assert len(rows)==1 and rows[0]['message']=='ประกาศส่วนกลางทดสอบ' and rows[0]['enabled']==1
+r=client.post('/broadcasts',data={'csrf':csrf,'message':['ติดตามเราได้ที่\\nhttps://example.test','แจ้งปัญหาได้ที่\\n@support'],'enabled':'1'},follow_redirects=False); assert r.status_code==303
+rows=mod.STORE.list_global_broadcast_messages(); assert len(rows)==2 and rows[0]['message']=='ติดตามเราได้ที่\\nhttps://example.test' and rows[1]['message']=='แจ้งปัญหาได้ที่\\n@support' and all(row['enabled']==1 for row in rows)
+r=client.post('/broadcasts/bulk',data={'csrf':csrf,'messages':'บรรทัดหนึ่ง\\nhttps://example.test/multiline','enabled':'1'},follow_redirects=False); assert r.status_code==303
+rows=mod.STORE.list_global_broadcast_messages(); assert len(rows)==3 and rows[-1]['message']=='บรรทัดหนึ่ง\\nhttps://example.test/multiline'
+r=client.get('/telegram'); assert r.status_code==200 and 'Telegram ส่วนกลาง' in r.text and 'type="password"' in r.text
 # Job-producing forms support in-page dialog metadata while normal redirects remain available.
 rj=client.post('/system/action',data={'csrf':csrf,'action':'doctor'},headers={'X-SNTalkBot-Job-Dialog':'1','X-SNTalkBot-Return-To':'/system'},follow_redirects=False); assert rj.status_code==202
 meta=rj.json(); assert meta['job_id'] and meta['stream_url'].endswith('/stream') and meta['return_to']=='/system'
@@ -219,6 +244,7 @@ r=client2.get('/'); assert r.status_code==200 and 'mine' in r.text and 'other' n
 assert client2.get('/instances/other').status_code==404
 assert client2.get('/users').status_code==403
 assert client2.get('/broadcasts').status_code==403
+assert client2.get('/telegram').status_code==403
 r=client2.get('/instances/mine/config'); assert r.status_code==200 and 'ล็อกสำหรับบัญชีผู้ใช้ทั่วไป' in r.text
 m2=re.search(r'name="csrf" value="([^"]+)"',r.text); assert m2
 customer_csrf=m2.group(1)

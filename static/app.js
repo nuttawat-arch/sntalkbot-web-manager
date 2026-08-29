@@ -412,3 +412,56 @@ document.addEventListener('click', (e) => {
     })
     .catch((err) => { status.textContent = `ตรวจรุ่นล่าสุดเบื้องหลังไม่สำเร็จ: ${err}`; });
 })();
+
+// Global Broadcast composer: one textarea is one message, and each message may
+// contain multiple lines. Extra fields are keyboard/screen-reader friendly and
+// submit as repeated `message` form fields into the one central message pool.
+(function globalBroadcastComposer() {
+  const fields = document.querySelector('[data-broadcast-message-fields]');
+  const template = document.getElementById('broadcast-message-template');
+  const status = document.getElementById('broadcast-message-status');
+  if (!fields || !template) return;
+
+  function items() { return Array.from(fields.querySelectorAll('[data-broadcast-message-item]')); }
+  function renumber() {
+    items().forEach((item, index) => {
+      const number = index + 1;
+      const textarea = item.querySelector('textarea[name="message"]');
+      const label = item.querySelector('label');
+      if (!textarea || !label) return;
+      textarea.id = `broadcast-message-${number}`;
+      label.htmlFor = textarea.id;
+      label.textContent = `ข้อความ ${number}`;
+    });
+  }
+
+  document.addEventListener('click', (event) => {
+    const add = event.target.closest('[data-add-broadcast-message]');
+    if (add) {
+      const count = items().length;
+      if (count >= 100) {
+        if (status) status.textContent = 'เพิ่มได้สูงสุด 100 ข้อความต่อการบันทึกหนึ่งครั้ง';
+        return;
+      }
+      const fragment = template.content.cloneNode(true);
+      fields.appendChild(fragment);
+      renumber();
+      const added = items().at(-1);
+      const textarea = added && added.querySelector('textarea[name="message"]');
+      if (status) status.textContent = `เพิ่มช่องข้อความ ${items().length} แล้ว`;
+      if (textarea) textarea.focus();
+      return;
+    }
+
+    const remove = event.target.closest('[data-remove-broadcast-message]');
+    if (!remove) return;
+    const item = remove.closest('[data-broadcast-message-item]');
+    if (!item || items().length <= 1) return;
+    item.remove();
+    renumber();
+    if (status) status.textContent = `เหลือ ${items().length} ช่องข้อความ`;
+    const remaining = items().at(-1);
+    const textarea = remaining && remaining.querySelector('textarea[name="message"]');
+    if (textarea) textarea.focus();
+  });
+})();

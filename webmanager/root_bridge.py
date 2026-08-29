@@ -16,6 +16,7 @@ NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 CONFIG = Path("/etc/default/sntalkbot-web-manager")
 GUARDIAN_SERVICE = "sntalkbot-web-guardian"
 GUARDIAN_TRANSITION_MARKER = Path("/run/sntalkbot-web-manager-guardian-transition.pending")
+CENTRAL_TELEGRAM_ENV = Path("/etc/sntalkbot-telegram.env")
 
 
 def settings():
@@ -75,6 +76,72 @@ def capture_input(args, payload: str, cwd=None):
             sys.stdout.write(p.stdout)
         raise SystemExit(p.returncode)
     return p.stdout
+
+
+def _read_central_telegram_settings():
+    data = {"token": "", "default_chat_id": ""}
+    if not CENTRAL_TELEGRAM_ENV.is_file():
+        return data
+    for raw in CENTRAL_TELEGRAM_ENV.read_text(encoding="utf-8", errors="replace").splitlines():
+        if "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        if key == "SNTALKBOT_TELEGRAM_BOT_TOKEN":
+            data["token"] = value.strip()
+        elif key == "SNTALKBOT_TELEGRAM_DEFAULT_CHAT_ID":
+            data["default_chat_id"] = value.strip()
+    return data
+
+
+def central_telegram_status():
+    current = _read_central_telegram_settings()
+    sys.stdout.write(json.dumps({
+        "configured": bool(current["token"]),
+        "default_chat_id": current["default_chat_id"],
+    }, ensure_ascii=False) + "\n")
+    return 0
+
+
+def central_telegram_set_stdin():
+    raw = sys.stdin.buffer.read(8193)
+    if len(raw) > 8192:
+        raise SystemExit("central Telegram request is too large")
+    try:
+        req = json.loads(raw.decode("utf-8"))
+    except Exception:
+        raise SystemExit("invalid central Telegram request")
+    current = _read_central_telegram_settings()
+    token_supplied = "token" in req and str(req.get("token") or "").strip() != ""
+    token = str(req.get("token") or "").strip() if token_supplied else current["token"]
+    if bool(req.get("clear_token")):
+        token = ""
+    chat_id = str(req.get("default_chat_id") or "").strip()
+    for label, value, limit in (("token", token, 512), ("default_chat_id", chat_id, 256)):
+        if len(value) > limit or "\n" in value or "\r" in value or "\x00" in value:
+            raise SystemExit(f"invalid {label}")
+    if token and ":" not in token:
+        raise SystemExit("Telegram bot token format looks invalid")
+    if token or chat_id:
+        CENTRAL_TELEGRAM_ENV.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_name = tempfile.mkstemp(prefix=".sntalkbot-telegram-", dir=str(CENTRAL_TELEGRAM_ENV.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(f"SNTALKBOT_TELEGRAM_BOT_TOKEN={token}\n")
+                f.write(f"SNTALKBOT_TELEGRAM_DEFAULT_CHAT_ID={chat_id}\n")
+                f.flush(); os.fsync(f.fileno())
+            os.chmod(temp_name, 0o600)
+            os.chown(temp_name, 0, 0)
+            os.replace(temp_name, CENTRAL_TELEGRAM_ENV)
+        finally:
+            try:
+                if os.path.exists(temp_name): os.unlink(temp_name)
+            except OSError:
+                pass
+    else:
+        try: CENTRAL_TELEGRAM_ENV.unlink()
+        except FileNotFoundError: pass
+    sys.stdout.write(json.dumps({"ok": True, "configured": bool(token), "default_chat_id": chat_id}, ensure_ascii=False) + "\n")
+    return 0
 
 
 def verify_teamtalk_admin_stdin():
@@ -414,6 +481,12 @@ def main():
             elif args: raise SystemExit("unexpected arguments")
             return run(cmd)
         raise SystemExit("helper action not allowed")
+    if action=="central-telegram-status":
+        if args: raise SystemExit("central-telegram-status takes no arguments")
+        return central_telegram_status()
+    if action=="central-telegram-set":
+        if args: raise SystemExit("central-telegram-set accepts JSON on stdin only")
+        return central_telegram_set_stdin()
     if action=="verify-teamtalk-admin":
         if args: raise SystemExit("verify-teamtalk-admin accepts JSON on stdin only")
         return verify_teamtalk_admin_stdin()
