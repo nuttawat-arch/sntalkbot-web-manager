@@ -2,10 +2,13 @@
 from pathlib import Path
 import ast, os, re, subprocess, sys, tempfile, time
 root=Path(__file__).resolve().parents[1]
+PORTABLE_ONLY = os.name == 'nt' or '--portable' in sys.argv
 errors=[]
 def need(cond,msg):
     if cond: print('[OK] '+msg)
     else: errors.append(msg); print('[FAIL] '+msg)
+def defer(msg):
+    print('[DEFERRED-LINUX] '+msg)
 for p in root.rglob('*.py'):
     if '.venv' in p.parts: continue
     try: ast.parse(p.read_text(encoding='utf-8'), filename=str(p))
@@ -108,9 +111,15 @@ checks={
 for name,ok in checks.items(): need(ok,name)
 # Root bridge should never expose generic shell/user-provided executable APIs.
 need('subprocess.run([str(x) for x in args]' in bridge and 'os.system' not in bridge and 'subprocess.Popen' not in bridge, 'root bridge executes only structured allowlisted argv actions')
-# Shell syntax
-need(subprocess.run(['bash','-n',str(root/'install.sh')],capture_output=True).returncode==0,'installer shell syntax valid')
-need(subprocess.run(['bash','-n',str(root/'install_remote.sh')],capture_output=True).returncode==0,'remote installer shell syntax valid')
+# Shell syntax is authoritative on Linux. Windows publication deliberately does
+# not translate native paths into Git-Bash paths because that made a Linux gate
+# spuriously block a valid Windows release. server_verify.sh runs bash -n later.
+if PORTABLE_ONLY:
+    defer('installer shell syntax valid (authoritative bash -n runs on Linux server)')
+    defer('remote installer shell syntax valid (authoritative bash -n runs on Linux server)')
+else:
+    need(subprocess.run(['bash','-n',str(root/'install.sh')],capture_output=True).returncode==0,'installer shell syntax valid')
+    need(subprocess.run(['bash','-n',str(root/'install_remote.sh')],capture_output=True).returncode==0,'remote installer shell syntax valid')
 crlf=[]
 for path in root.rglob('*'):
     if not path.is_file() or '.git' in path.parts or '__pycache__' in path.parts or '.venv' in path.parts: continue
@@ -118,6 +127,28 @@ for path in root.rglob('*'):
     if b'\r\n' in path.read_bytes(): crlf.append(str(path.relative_to(root)))
 need(not crlf, 'Linux/Web Manager source line endings are LF-only')
 if crlf: print('CRLF files: '+', '.join(crlf[:12]))
+
+# The Web Manager is a Linux service. On a Windows publisher, stop after the
+# portable/static contract above. The following tests intentionally exercise
+# Linux ownership (os.chown), Bash, Guardian sockets, SQLite lifecycle,
+# TestClient integration and privileged action routing. They are executed in
+# full by SNTalkBot-Release-Automation/server_verify.sh on the Linux host.
+if PORTABLE_ONLY:
+    for msg in (
+        'central Global Broadcast SQLite runtime persistence/rotation',
+        'first-run auth + tenant isolation + privileged-page/job ownership TestClient flow',
+        'create/run/stop/restart/delete/logs/config/limits/cookies/system/migration action matrix',
+        'batch instance discovery + ownership functional regression',
+        'staged source updater backup/rollback functional regression',
+        'Guardian public socket/form/SSE runtime regression',
+        'SQLite password recovery runtime regression',
+    ):
+        defer(msg)
+    if errors:
+        print('\n'.join(errors)); raise SystemExit(1)
+    print('[OK] Windows portable Web Manager validation passed; Linux runtime validation is deferred to server_verify.sh')
+    raise SystemExit(0)
+
 # Central broadcast persistence/rotation must survive process restart and stay in SQLite.
 try:
     with tempfile.TemporaryDirectory() as td:

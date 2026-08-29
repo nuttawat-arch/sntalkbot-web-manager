@@ -1,4 +1,4 @@
-# TTUHelper ↔ SNTalkBot Web Manager 1.1.16 — action map ตามโค้ดจริง
+# TTUHelper ↔ SNTalkBot Web Manager 1.1.17 — action map ตามโค้ดจริง
 
 TTUHelper รุ่นปัจจุบันมี **22 public commands** แต่ Web Manager ไม่เรียก CLI interactive ทุกคำสั่งตรง ๆ บางความสามารถทำ native ในเว็บเพื่อให้ non-interactive, ตรวจ ownership และไม่เปิด arbitrary shell
 

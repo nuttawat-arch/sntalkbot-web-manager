@@ -1,4 +1,4 @@
-# คู่มือติดตั้ง SNTalkBot Web Manager 1.1.16: Standalone และ Reverse Proxy
+# คู่มือติดตั้ง SNTalkBot Web Manager 1.1.17: Standalone และ Reverse Proxy
 
 Web Manager ใช้ 2 service: `sntalkbot-web-guardian` คง socket `127.0.0.1:28765` สำหรับ Reverse Proxy และ `sntalkbot-web-manager` รัน FastAPI backend ที่ `127.0.0.1:28766` โดยค่าเริ่มต้น ทั้งคู่ไม่เปิดหน้าจัดการออก Internet โดยตรง
 
@@ -24,7 +24,7 @@ ss -ltn | grep ':28765 ' || true
 
 ```bash
 sudo mkdir -p /opt/sntalkbot-web-manager
-sudo unzip -o SNTalkBot-Web-Manager-1.1.16.zip -d /opt/sntalkbot-web-manager
+sudo unzip -o SNTalkBot-Web-Manager-1.1.17.zip -d /opt/sntalkbot-web-manager
 cd /opt/sntalkbot-web-manager
 sudo chmod +x install.sh install_remote.sh
 sudo ./install.sh
