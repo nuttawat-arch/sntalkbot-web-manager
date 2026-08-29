@@ -1,22 +1,26 @@
 {% extends "base.html" %}{% block title %}ตั้งค่า {{ name }}{% endblock %}{% block content %}
 <h2>การตั้งค่าทั้งหมด: {{ name }}</h2>
-{% if saved %}<p class="success" role="status">บันทึก config.ini แล้ว หากค่ามีผลตอนเริ่มโปรแกรมให้รีสตาร์ตบอต</p><form method="post" action="/instances/{{ name }}/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><button name="action" value="restart">รีสตาร์ตตอนนี้</button></form>{% endif %}
+{% if saved %}<p class="success" role="status">บันทึก config.ini แล้ว หากบอตกำลังทำงาน Web Manager ได้สั่ง Restart ผ่าน TTUHelper ให้ค่าใหม่มีผลแล้ว; หากบอตหยุดอยู่ ค่าจะมีผลเมื่อเปิดครั้งถัดไป</p>{% endif %}
 <p>ทุก section/key ที่มีใน <code>config.ini</code> จะแสดงที่นี่ ค่า Boolean ใช้ checkbox ส่วน password/token/API key ไม่แสดงค่าปัจจุบันและปล่อยช่องว่างเพื่อคงค่าเดิม</p>
 {% if user.role != 'superadmin' %}<p class="minor">เพื่อป้องกันการย้ายบอตไปยัง TeamTalk Server ที่เจ้าของไม่ได้รับอนุญาต ค่า host/ports/encryption และบัญชี TeamTalk ของบอตจะอ่านได้แต่แก้ไม่ได้หลังยืนยันเจ้าของแล้ว หากจำเป็นต้องเปลี่ยนให้ Super Admin เป็นผู้ดำเนินการ</p>{% endif %}
 <form method="post" action="/instances/{{ name }}/config"><input type="hidden" name="csrf" value="{{ csrf }}">
 {% for section in sections %}<details open><summary><strong>[{{ section.name }}]</strong></summary><fieldset><legend>{{ section.name }}</legend>
 {% for f in section.fields %}
-<input type="hidden" name="kind__{{ f.section }}__{{ f.key }}" value="{{ f.kind }}">
-<label for="cfg__{{ f.section }}__{{ f.key }}">{{ f.key }}{% if f.locked %} — ล็อกสำหรับบัญชีผู้ใช้ทั่วไป{% endif %}</label>
+<label for="cfg__{{ f.section }}__{{ f.key }}"><strong>{{ f.label }}</strong>{% if f.locked %} — ล็อกสำหรับบัญชีผู้ใช้ทั่วไป{% endif %}</label>
+<p id="desc__{{ f.section }}__{{ f.key }}" class="minor">{{ f.description }} <code>{{ f.section }}.{{ f.key }}</code></p>
 {% if f.kind == 'bool' %}
-<input id="cfg__{{ f.section }}__{{ f.key }}" name="cfg__{{ f.section }}__{{ f.key }}" type="checkbox" {% if f.value|lower == 'true' %}checked{% endif %} {% if f.locked %}disabled aria-disabled="true"{% endif %}>
+<input id="cfg__{{ f.section }}__{{ f.key }}" name="cfg__{{ f.section }}__{{ f.key }}" type="checkbox" aria-describedby="desc__{{ f.section }}__{{ f.key }}" {% if f.value|lower == 'true' %}checked{% endif %} {% if f.locked %}disabled aria-disabled="true"{% endif %}>
+{% elif f.kind == 'choice' %}
+<fieldset aria-describedby="desc__{{ f.section }}__{{ f.key }}"><legend>{{ f.label }}</legend>
+{% for option_label, option_value in f.options %}<label><input type="radio" name="cfg__{{ f.section }}__{{ f.key }}" value="{{ option_value }}" {% if f.value|string == option_value|string %}checked{% endif %} {% if f.locked %}disabled aria-disabled="true"{% endif %}> {{ option_label }}</label>{% endfor %}
+</fieldset>
 {% elif f.kind == 'secret' %}
-<input id="cfg__{{ f.section }}__{{ f.key }}" name="cfg__{{ f.section }}__{{ f.key }}" type="password" placeholder="{% if f.set %}ตั้งค่าอยู่ — เว้นว่างเพื่อคงเดิม{% else %}ยังว่าง{% endif %}" {% if f.locked %}disabled aria-disabled="true"{% endif %}>
+<input id="cfg__{{ f.section }}__{{ f.key }}" name="cfg__{{ f.section }}__{{ f.key }}" type="password" aria-describedby="desc__{{ f.section }}__{{ f.key }}" placeholder="{% if f.set %}ตั้งค่าอยู่ — เว้นว่างเพื่อคงเดิม{% else %}ยังว่าง{% endif %}" {% if f.locked %}disabled aria-disabled="true"{% endif %}>
 {% if not f.locked %}<label class="minor"><input type="checkbox" name="clear_secret" value="{{ f.section }}.{{ f.key }}"> ล้างค่านี้</label>{% endif %}
 {% elif f.kind in ('int','float') %}
-<input id="cfg__{{ f.section }}__{{ f.key }}" name="cfg__{{ f.section }}__{{ f.key }}" type="number" step="{% if f.kind == 'float' %}any{% else %}1{% endif %}" value="{{ f.value }}" {% if f.locked %}readonly aria-readonly="true"{% endif %}>
+<input id="cfg__{{ f.section }}__{{ f.key }}" name="cfg__{{ f.section }}__{{ f.key }}" type="number" aria-describedby="desc__{{ f.section }}__{{ f.key }}" step="{% if f.kind == 'float' %}any{% else %}1{% endif %}" value="{{ f.value }}" {% if f.locked %}readonly aria-readonly="true"{% endif %}>
 {% else %}
-<input id="cfg__{{ f.section }}__{{ f.key }}" name="cfg__{{ f.section }}__{{ f.key }}" value="{{ f.value }}" {% if f.locked %}readonly aria-readonly="true"{% endif %}>
+<input id="cfg__{{ f.section }}__{{ f.key }}" name="cfg__{{ f.section }}__{{ f.key }}" aria-describedby="desc__{{ f.section }}__{{ f.key }}" value="{{ f.value }}" {% if f.locked %}readonly aria-readonly="true"{% endif %}>
 {% endif %}
 {% endfor %}</fieldset></details>{% endfor %}
 <button type="submit">บันทึกการตั้งค่า</button></form>

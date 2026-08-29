@@ -34,6 +34,7 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 VERSION = (APP_ROOT / "VERSION").read_text(encoding="utf-8").strip()
 DATA_DIR = Path(os.getenv("SNWEB_DATA_DIR", "/var/lib/sntalkbot-web-manager"))
 SESSION_SECRET_FILE = Path(os.getenv("SNWEB_SESSION_SECRET_FILE", "/etc/sntalkbot-web-manager/session_secret"))
+GITHUB_WEBHOOK_SECRET_FILE = Path(os.getenv("SNWEB_GITHUB_WEBHOOK_SECRET_FILE", "/etc/sntalkbot-web-manager/github_webhook_secret"))
 DB_FILE = Path(os.getenv("SNWEB_DB_FILE", str(DATA_DIR / "webmanager.db")))
 ROOT_BRIDGE = Path(os.getenv("SNWEB_ROOT_BRIDGE", "/usr/local/lib/sntalkbot-web-manager/snweb-root"))
 TTU_CONFIG = Path(os.getenv("TTU_HELPER_CONFIG", "/etc/default/ttuhelper"))
@@ -87,6 +88,16 @@ def _session_secret():
 
 SESSION_SECRET = _session_secret()
 
+def _static_revision():
+    digest = hashlib.sha256()
+    for name in ("app.js", "style.css"):
+        path = APP_ROOT / "static" / name
+        digest.update(name.encode("utf-8"))
+        digest.update(path.read_bytes() if path.is_file() else b"")
+    return digest.hexdigest()[:16]
+
+STATIC_REV = _static_revision()
+
 
 def _last_resort_error_html(request_id: str) -> str:
     # Deliberately static: this fallback must not depend on Jinja, SQLite,
@@ -139,6 +150,16 @@ app.add_middleware(LastResortErrorMiddleware)
 app.mount("/static", StaticFiles(directory=APP_ROOT / "static"), name="static")
 templates = Jinja2Templates(directory=APP_ROOT / "templates")
 templates.env.globals["process_generation"] = PROCESS_GENERATION
+templates.env.globals["static_rev"] = STATIC_REV
+
+@app.middleware("http")
+async def no_store_html(request: Request, call_next):
+    response = await call_next(request)
+    content_type = str(response.headers.get("content-type") or "").lower()
+    if "text/html" in content_type:
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+    return response
 
 def current_user(request: Request):
     user_id = request.session.get("user_id")
@@ -418,12 +439,159 @@ def bot_api_status(path: Path):
         return None
 
 
+def bot_api_release_event(path: Path, payload: dict):
+    meta = read_instance_meta(path)
+    try:
+        port = int(meta.get("api_port") or 0)
+    except ValueError:
+        port = 0
+    token = meta.get("api_token", "")
+    if not port or not token:
+        return False
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/v1/events/release",
+        data=body, method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            return 200 <= int(resp.status) < 300
+    except Exception:
+        return False
+
+
+def bot_api_global_broadcast(path: Path, message: str):
+    meta = read_instance_meta(path)
+    try:
+        port = int(meta.get("api_port") or 0)
+    except ValueError:
+        port = 0
+    token = meta.get("api_token", "")
+    if not port or not token:
+        return False
+    body = json.dumps({"message": str(message)}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/v1/events/global-broadcast",
+        data=body, method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            return 200 <= int(resp.status) < 300
+    except Exception:
+        return False
+
+
+def _fanout_release_event(payload: dict):
+    rows = root_instance_snapshot(force=True)
+    containers = docker_containers_snapshot(force=True)
+    attempted = delivered = 0
+    for row in rows:
+        name = str(row.get("name") or "")
+        if not BOT_NAME_RE.fullmatch(name):
+            continue
+        state = containers.get(name) if isinstance(containers, dict) else None
+        if state is None:
+            state = docker_container(name) or {}
+        if not bool(state.get("running")):
+            continue
+        attempted += 1
+        if bot_api_release_event(bots_root() / name, payload):
+            delivered += 1
+    return attempted, delivered
+
+
+_GLOBAL_BROADCAST_STOP = threading.Event()
+_GLOBAL_BROADCAST_THREAD = None
+_GLOBAL_BROADCAST_RETRY_AFTER = {}
+
+
+def _global_broadcast_tick(now=None):
+    """Deliver due central messages without writing per-second runtime state."""
+    now = float(time.time() if now is None else now)
+    root = bots_root()
+    if not root.is_dir():
+        return 0
+    delivered = 0
+    try:
+        paths = list(root.iterdir())
+    except OSError:
+        return 0
+    for path in paths:
+        if not path.is_dir() or not BOT_NAME_RE.fullmatch(path.name) or not (path / "config.ini").is_file():
+            continue
+        retry_at = float(_GLOBAL_BROADCAST_RETRY_AFTER.get(path.name, 0.0) or 0.0)
+        if now < retry_at:
+            continue
+        try:
+            cfg = read_config(path / "config.ini")
+            if not cfg.getboolean("features", "server_management_enabled", fallback=True):
+                continue
+            if not cfg.getboolean("global_broadcast", "enabled", fallback=False):
+                continue
+            interval = max(1, min(10080, cfg.getint("global_broadcast", "interval_minutes", fallback=60)))
+        except Exception:
+            LOGGER.exception("Invalid global broadcast config for %s", path.name)
+            continue
+        state = STORE.global_broadcast_state(path.name)
+        if now - float(state.get("last_sent") or 0.0) < interval * 60:
+            continue
+        message = STORE.next_global_broadcast_message(state.get("last_message_id") or 0)
+        if not message:
+            continue
+        if bot_api_global_broadcast(path, message["message"]):
+            STORE.set_global_broadcast_state(
+                path.name, last_sent=now, last_message_id=int(message["id"])
+            )
+            _GLOBAL_BROADCAST_RETRY_AFTER.pop(path.name, None)
+            delivered += 1
+        else:
+            # A stopped/restarting bot is not a reason to advance the schedule.
+            # Back off API retries so the scheduler remains cheap.
+            _GLOBAL_BROADCAST_RETRY_AFTER[path.name] = now + 30.0
+    return delivered
+
+
+def _global_broadcast_scheduler_loop():
+    while not _GLOBAL_BROADCAST_STOP.wait(5.0):
+        try:
+            _global_broadcast_tick()
+        except Exception:
+            LOGGER.exception("Central global broadcast scheduler failed")
+
+
+@app.on_event("startup")
+def _start_global_broadcast_scheduler():
+    global _GLOBAL_BROADCAST_THREAD
+    if _GLOBAL_BROADCAST_THREAD and _GLOBAL_BROADCAST_THREAD.is_alive():
+        return
+    _GLOBAL_BROADCAST_STOP.clear()
+    _GLOBAL_BROADCAST_THREAD = threading.Thread(
+        target=_global_broadcast_scheduler_loop, name="snweb-global-broadcast", daemon=True
+    )
+    _GLOBAL_BROADCAST_THREAD.start()
+
+
+@app.on_event("shutdown")
+def _stop_global_broadcast_scheduler():
+    _GLOBAL_BROADCAST_STOP.set()
+
+
 def live_state(path: Path, *, running: bool = True):
-    # Never surface a recent runtime_status.json snapshot after the container
-    # has stopped.  It is historical data at that point, not live state.
+    # Realtime has exactly one source: the bot's loopback Bearer API. A stopped
+    # or unreachable bot is reported unavailable instead of serving stale files.
     if not running:
         return None
-    return bot_api_status(path) or runtime_state(path)
+    return bot_api_status(path)
 
 
 def helper_settings():
@@ -524,20 +692,6 @@ def read_config(path: Path):
     return cfg
 
 
-def runtime_state(path: Path):
-    p = path / "runtime_status.json"
-    if not p.is_file():
-        return None
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        age = time.time() - float(data.get("updated_epoch") or 0)
-        data["stale"] = age > 15
-        data["age_seconds"] = max(0, int(age))
-        return normalize_live_payload(data)
-    except Exception:
-        return None
-
-
 def list_instances(user=None, *, include_live=True, force_snapshot=False):
     """Return visible instances from one privileged snapshot plus one Docker snapshot.
 
@@ -564,7 +718,7 @@ def list_instances(user=None, *, include_live=True, force_snapshot=False):
             continue
         cont = containers.get(name)
         if cont is None and not batch_container_snapshot_available:
-            # Old root bridge compatibility only. Production 1.1.12 normally uses
+            # Old root bridge compatibility only. Production 1.1.13 normally uses
             # one docker-list-managed call for the whole dashboard.
             try:
                 cont = docker_container(name)
@@ -624,24 +778,14 @@ class JobManager:
         self.cond = threading.Condition(self.lock)
         self.jobs = {}
 
-    def _meta_path(self, jid):
-        return DATA_DIR / "jobs" / f"{jid}.json"
-
     def _log_path(self, jid):
         return DATA_DIR / "jobs" / f"{jid}.txt"
 
     def _persist_meta(self, job):
-        safe = {
-            "id": job.get("id"), "title": job.get("title"), "status": job.get("status"),
-            "created": job.get("created"), "finished": job.get("finished"),
-            "owner_user_id": job.get("owner_user_id"), "kind": job.get("kind"),
-        }
         try:
-            path = self._meta_path(job["id"])
-            path.write_text(json.dumps(safe, ensure_ascii=False), encoding="utf-8")
-            os.chmod(path, 0o600)
+            STORE.upsert_job(job)
         except Exception:
-            pass
+            logging.exception("Unable to persist Web Manager job metadata")
 
     def create(self, title, func, *args, owner_user_id=None, kind=None, **kwargs):
         jid = uuid.uuid4().hex[:12]
@@ -706,12 +850,11 @@ class JobManager:
             live = self.jobs.get(jid)
             if live:
                 return dict(live)
-        meta = self._meta_path(jid)
         log = self._log_path(jid)
-        if not meta.is_file():
-            return {}
         try:
-            job = json.loads(meta.read_text(encoding="utf-8"))
+            job = STORE.get_job(jid)
+            if not job:
+                return {}
             job["output"] = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
             return job
         except Exception:
@@ -908,69 +1051,202 @@ def create_instance(values: dict):
     return path
 
 
+CONFIG_ENUMS = {
+    ("bot", "gender"): [("ชาย", "0"), ("หญิง", "256"), ("เป็นกลาง", "4096")],
+    ("bot", "char_limit_mode"): [("Kick ผู้ใช้", "1"), ("Ban ผู้ใช้", "2")],
+    ("bot", "blacklist_mode"): [("Kick ผู้ใช้", "1"), ("Ban ผู้ใช้", "2")],
+    ("playback", "channel_messages_mode"): [("ส่ง Private message", "private"), ("ไม่ส่งข้อความ", "silent")],
+    ("playback", "audio_quality"): [("Low", "Low"), ("Medium", "Medium"), ("High", "High")],
+    ("playback", "play_mode"): [("M1 — เล่นรายการเดียว", "1"), ("M2 — เล่นต่อ/Autoplay", "2"), ("M3 — เล่นเพลงเดิมซ้ำ", "3")],
+    ("playback", "announcement_tts_mode"): [("Microsoft Edge TTS", "microsoft"), ("Google standard gTTS", "google")],
+    ("tts", "mode"): [("Microsoft Edge TTS", "microsoft"), ("Google standard gTTS", "google")],
+    ("accounts", "detection_mode"): [("Guest accounts only", "1"), ("All new accounts", "2"), ("Specific username", "3")],
+    ("logging", "level"): [("DEBUG", "DEBUG"), ("INFO", "INFO"), ("WARNING", "WARNING"), ("ERROR", "ERROR"), ("CRITICAL", "CRITICAL")],
+}
+
+CONFIG_LABELS = {
+    "default_channel": "Channel ID หรือ Channel path",
+    "player_enabled": "เปิดฟังก์ชัน Player",
+    "server_management_enabled": "เปิดฟังก์ชัน Server Manager",
+    "persist_queue": "เก็บคิวข้าม Restart/Update",
+    "resume_queue_on_start": "เล่นคิวต่ออัตโนมัติหลัง Restart",
+    "queue_mode": "เปิด Queue Mode",
+    "welcome_mode": "ต้อนรับเมื่อผู้ใช้เข้าห้องของบอต",
+    "welcome_broadcast": "Global login welcome broadcast",
+    "profanity_filter_enabled": "เปิดตัวกรองคำ",
+    "channel_input_enabled": "รับคำสั่งจากข้อความในห้อง",
+    "intercept_channel_messages": "ตรวจข้อความใน Channel ทั้งเซิร์ฟเวอร์",
+    "tts_enabled": "เปิด Text-to-Speech",
+    "vpn_detection": "ตรวจ VPN/Proxy",
+    "prevent_noname": "ป้องกันชื่อ NoName",
+    "enabled": "เปิดใช้งาน",
+    "broadcast_enabled": "แจ้งเวอร์ชันผ่าน TeamTalk Global Broadcast",
+    "telegram_enabled": "แจ้งเวอร์ชันผ่าน Telegram",
+    "polling_fallback": "ใช้การตรวจ GitHub แบบ polling เป็น fallback",
+    "interval_minutes": "ช่วงเวลาส่ง Global Broadcast (นาที)",
+}
+
+CONFIG_DESCRIPTIONS = {
+    ("bot", "default_channel"): "ใส่ TeamTalk Channel ID เช่น 8 หรือค่าที่คัดลอกจาก gcid/cid ได้โดยตรง; หากใช้ชื่อห้องให้ใช้พาธแบบเดิม เช่น /music",
+    ("playback", "persist_queue"): "คิวถูกเก็บใน SQLite/WAL และไม่มีเพดานจำนวนรายการระดับแอปพลิเคชัน จึงยังอยู่หลัง restart/update",
+    ("playback", "resume_queue_on_start"): "ถ้าเปิด บอตจะเริ่มรายการคิวที่ค้างไว้หลังเปิดโปรแกรม; ถ้าปิด คิวยังอยู่แต่รอคำสั่ง p",
+    ("playback", "queue_mode"): "เมื่อเปิด เพลงหรือรายการใหม่จะต่อท้าย FIFO queue แทนการแทรกการเล่นปัจจุบัน",
+    ("playback", "play_mode"): "เลือกลักษณะการเล่นเมื่อไม่อยู่ใน Queue Mode",
+    ("bot", "welcome_mode"): "ส่งข้อความต้อนรับเฉพาะ genuine join ในห้องเดียวกับบอต",
+    ("bot", "welcome_broadcast"): "ส่งข้อความต้อนรับแบบ Global เมื่อผู้ใช้ login; แยกจากการต้อนรับในห้อง",
+    ("bot", "profanity_filter_enabled"): "สวิตช์หลักของตัวกรอง blacklist หลายภาษา ทั้งข้อความ ชื่อ/สถานะ และ metadata ที่รองรับ",
+    ("tts", "mode"): "เลือก engine TTS หลักของบอต โดยไม่ต้องจำค่าดิบใน config.ini",
+    ("playback", "announcement_tts_mode"): "เลือก engine TTS สำหรับเสียงประกาศของ Player แยกจาก TTS หลัก",
+    ("accounts", "detection_mode"): "กำหนดกลุ่มบัญชีที่ระบบตรวจจับ/automation ของ Manager จะนำไปใช้",
+    ("account_requests", "enabled"): "เปิด workflow ขอสร้าง TeamTalk account และยืนยัน OTP ผ่าน Telegram",
+    ("updates", "enabled"): "เปิดระบบแจ้งเตือนเมื่อ GitHub มี SNTalkBot release ใหม่ โดยไม่ติดตั้งให้อัตโนมัติ",
+    ("updates", "polling_fallback"): "ปิดไว้เป็นค่าเริ่มต้นเมื่อใช้ GitHub webhook; เปิดเฉพาะเครื่องที่รับ webhook ไม่ได้",
+    ("global_broadcast", "enabled"): "Manager/Full เท่านั้น: เปิดรับข้อความส่วนกลางจากฐานข้อมูล Web Manager; ค่าเริ่มต้นปิด",
+    ("global_broadcast", "interval_minutes"): "กำหนดความถี่ของบอตนี้ 1-10080 นาที; ข้อความส่วนกลางแก้ไขได้จากเมนู Global Broadcast",
+    ("global_broadcast", "tts_enabled"): "ใช้ข้อความ Central Global Broadcast ชุดเดียวกัน แต่ให้บอตพูดข้อความนั้นด้วย TTS ในห้องของบอต; ไม่มี messages.txt หรือ scheduler ข้อความชุดที่สอง",
+}
+
+
+def _field_kind(section, key, value):
+    sk = (section.lower(), key.lower())
+    stripped = str(value or "").strip()
+    # One field intentionally accepts either a numeric TeamTalk Channel ID or
+    # a historical channel path. Never infer it as an integer field just
+    # because the current value happens to be 8.
+    if sk == ("bot", "default_channel"):
+        return "text"
+    if safe_secret_key(key):
+        return "secret"
+    if sk in CONFIG_ENUMS:
+        return "choice"
+    if stripped.lower() in ("true", "false"):
+        return "bool"
+    if re.fullmatch(r"-?\d+", stripped):
+        return "int"
+    if re.fullmatch(r"-?\d+(?:\.\d+)", stripped):
+        return "float"
+    return "text"
+
+
+def _field_label(section, key):
+    return CONFIG_LABELS.get(key.lower(), key.replace("_", " ").strip().title())
+
+
+def _field_description(section, key):
+    return CONFIG_DESCRIPTIONS.get(
+        (section.lower(), key.lower()),
+        f"ค่า {key} ในหมวด [{section}] ใช้กำหนดพฤติกรรมของฟีเจอร์นี้; ค่าเดิมจะถูกเก็บไว้ถ้าไม่ได้แก้ไข",
+    )
+
+
 def safe_secret_key(key):
     lk = key.lower()
     return any(token in lk for token in SECRET_KEYS)
 
 
+def _ensure_web_managed_config_defaults(cfg):
+    if not cfg.has_section("global_broadcast"):
+        cfg.add_section("global_broadcast")
+
+    # Upgrade old 5.1.12-and-earlier announcement settings in-memory so the Web
+    # Manager never presents controls for the removed messages.txt scheduler.
+    old_interval = None
+    if cfg.has_section("bot") and cfg.has_option("bot", "random_message_interval"):
+        try:
+            old_interval = int(cfg.get("bot", "random_message_interval", fallback="0") or 0)
+        except ValueError:
+            old_interval = None
+        cfg.remove_option("bot", "random_message_interval")
+    old_tts = None
+    if cfg.has_section("tts") and cfg.has_option("tts", "random_broadcast_enabled"):
+        try:
+            old_tts = cfg.getboolean("tts", "random_broadcast_enabled", fallback=False)
+        except ValueError:
+            old_tts = False
+        cfg.remove_option("tts", "random_broadcast_enabled")
+
+    if not cfg.has_option("global_broadcast", "enabled"):
+        cfg.set("global_broadcast", "enabled", "False")
+    if not cfg.has_option("global_broadcast", "interval_minutes"):
+        mapped = max(1, min(10080, old_interval)) if old_interval and old_interval > 0 else 60
+        cfg.set("global_broadcast", "interval_minutes", str(mapped))
+    if not cfg.has_option("global_broadcast", "tts_enabled"):
+        cfg.set("global_broadcast", "tts_enabled", "True" if old_tts else "False")
+    return cfg
+
+
 def config_for_form(path: Path, user=None):
-    cfg = read_config(path / "config.ini")
+    cfg = _ensure_web_managed_config_defaults(read_config(path / "config.ini"))
     is_superadmin = bool(user and user.get("role") == "superadmin")
     sections = []
     for section in cfg.sections():
         fields = []
         for key, value in cfg.items(section):
-            stripped = value.strip()
-            kind = "text"
-            if safe_secret_key(key):
-                kind = "secret"
-            elif stripped.lower() in ("true", "false"):
-                kind = "bool"
-            elif re.fullmatch(r"-?\d+", stripped):
-                kind = "int"
-            elif re.fullmatch(r"-?\d+(?:\.\d+)", stripped):
-                kind = "float"
+            kind = _field_kind(section, key, value)
             locked = (section.lower(), key.lower()) in TENANT_LOCKED_CONFIG_KEYS and not is_superadmin
-            fields.append({"section": section, "key": key, "value": value, "kind": kind, "set": bool(value), "locked": locked})
+            fields.append({
+                "section": section, "key": key, "value": value, "kind": kind,
+                "set": bool(value), "locked": locked,
+                "label": _field_label(section, key),
+                "description": _field_description(section, key),
+                "options": CONFIG_ENUMS.get((section.lower(), key.lower()), []),
+            })
         sections.append({"name": section, "fields": fields})
     return sections
 
 
 def save_config_form(path: Path, form, user=None):
-    cfg = read_config(path / "config.ini")
+    cfg = _ensure_web_managed_config_defaults(read_config(path / "config.ini"))
     is_superadmin = bool(user and user.get("role") == "superadmin")
     clear_secrets = set(form.getlist("clear_secret"))
     for section in cfg.sections():
         for key, old in list(cfg.items(section)):
             field = f"cfg__{section}__{key}"
-            kind = f"kind__{section}__{key}"
-            marker = form.get(kind, "text")
+            kind = _field_kind(section, key, old)
             locked = (section.lower(), key.lower()) in TENANT_LOCKED_CONFIG_KEYS and not is_superadmin
+            supplied = form.get(field)
             if locked:
-                # Disabled fields are normally absent from HTML submission. If a
-                # forged POST supplies a different value, reject it server-side.
-                supplied = form.get(field)
                 if supplied is not None:
-                    if safe_secret_key(key):
+                    if kind == "secret":
                         if str(supplied) or f"{section}.{key}" in clear_secrets:
                             raise HTTPException(status_code=403, detail="ผู้ใช้ทั่วไปไม่สามารถเปลี่ยน TeamTalk connection/login identity หลังยืนยันเจ้าของแล้ว")
-                    elif marker == "bool":
-                        submitted = "True" if form.get(field) == "on" else "False"
+                    elif kind == "bool":
+                        submitted = "True" if supplied == "on" else "False"
                         if submitted.casefold() != str(old).casefold():
                             raise HTTPException(status_code=403, detail="ผู้ใช้ทั่วไปไม่สามารถเปลี่ยน TeamTalk connection/login identity หลังยืนยันเจ้าของแล้ว")
                     elif str(supplied) != str(old):
                         raise HTTPException(status_code=403, detail="ผู้ใช้ทั่วไปไม่สามารถเปลี่ยน TeamTalk connection/login identity หลังยืนยันเจ้าของแล้ว")
                 continue
-            if safe_secret_key(key):
+            if kind == "secret":
                 secret_id = f"{section}.{key}"
                 if secret_id in clear_secrets:
                     cfg.set(section, key, "")
                 else:
-                    new = str(form.get(field, ""))
-                    if new:
-                        cfg.set(section, key, new)
-            elif marker == "bool":
+                    new_value = str(form.get(field, ""))
+                    if new_value:
+                        cfg.set(section, key, new_value)
+            elif kind == "bool":
                 cfg.set(section, key, "True" if form.get(field) == "on" else "False")
+            elif kind == "choice":
+                value = str(form.get(field, old))
+                allowed = {str(v) for _label, v in CONFIG_ENUMS[(section.lower(), key.lower())]}
+                if value not in allowed:
+                    raise HTTPException(status_code=400, detail=f"ค่าของ [{section}] {key} ไม่อยู่ในตัวเลือกที่อนุญาต")
+                cfg.set(section, key, value)
+            elif kind == "int":
+                value = str(form.get(field, old)).strip()
+                try:
+                    number = int(value)
+                except ValueError:
+                    raise HTTPException(status_code=400, detail=f"[{section}] {key} ต้องเป็นจำนวนเต็ม")
+                if (section.lower(), key.lower()) == ("global_broadcast", "interval_minutes") and not (1 <= number <= 10080):
+                    raise HTTPException(status_code=400, detail="Global Broadcast interval ต้องอยู่ระหว่าง 1-10080 นาที")
+                cfg.set(section, key, str(number))
+            elif kind == "float":
+                value = str(form.get(field, old)).strip()
+                try: float(value)
+                except ValueError: raise HTTPException(status_code=400, detail=f"[{section}] {key} ต้องเป็นตัวเลข")
+                cfg.set(section, key, value)
             else:
                 cfg.set(section, key, str(form.get(field, old)))
     tmp = path / "config.ini.tmp"
@@ -1222,6 +1498,44 @@ async def users_toggle(request: Request, user_id: int, csrf: str = Form(...)):
     if not target: raise HTTPException(status_code=404)
     STORE.set_active(user_id, not bool(target["active"]))
     return RedirectResponse("/users",status_code=303)
+
+
+@app.get("/broadcasts", response_class=HTMLResponse)
+def global_broadcasts_page(request: Request):
+    user = require_superadmin(request)
+    return templates.TemplateResponse("broadcasts.html", {
+        "request": request, "user": user,
+        "messages": STORE.list_global_broadcast_messages(),
+        "csrf": csrf_token(request), "version": VERSION,
+    })
+
+
+@app.post("/broadcasts")
+async def global_broadcasts_create(request: Request, csrf: str = Form(...), message: str = Form(...), enabled: str | None = Form(None)):
+    require_superadmin(request); check_csrf(request, csrf)
+    try:
+        STORE.create_global_broadcast_message(message, enabled=bool(enabled))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return RedirectResponse("/broadcasts", status_code=303)
+
+
+@app.post("/broadcasts/{message_id}/update")
+async def global_broadcasts_update(request: Request, message_id: int, csrf: str = Form(...), message: str = Form(...), enabled: str | None = Form(None)):
+    require_superadmin(request); check_csrf(request, csrf)
+    try:
+        if not STORE.update_global_broadcast_message(message_id, message=message, enabled=bool(enabled)):
+            raise HTTPException(status_code=404)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return RedirectResponse("/broadcasts", status_code=303)
+
+
+@app.post("/broadcasts/{message_id}/delete")
+async def global_broadcasts_delete(request: Request, message_id: int, csrf: str = Form(...)):
+    require_superadmin(request); check_csrf(request, csrf)
+    STORE.delete_global_broadcast_message(message_id)
+    return RedirectResponse("/broadcasts", status_code=303)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1577,6 +1891,13 @@ async def instance_config_save(request: Request, name: str):
     form = await request.form()
     check_csrf(request, str(form.get("csrf", "")))
     save_config_form(path, form, user)
+    container = docker_container(name) or {}
+    if bool(container.get("running")):
+        jid = jobs.create(
+            f"Apply config + restart {name}", job_helper_action, "restart", name,
+            owner_user_id=int(user["id"]), kind="config-restart",
+        )
+        return job_created_response(request, jid, f"/instances/{name}/config?saved=1")
     return RedirectResponse(f"/instances/{name}/config?saved=1", status_code=303)
 
 
@@ -1687,6 +2008,56 @@ async def migrate_submit(request: Request, csrf: str = Form(...), source: str = 
     admin=require_superadmin(request); check_csrf(request, csrf)
     jid = jobs.create("ย้าย TTMediaBot เก่า", job_migrate, source, role, bool(replace), bool(start_after), bool(dry_run), int(admin["id"]), owner_user_id=int(admin["id"]))
     return job_created_response(request, jid, "/migrate")
+
+
+def _github_webhook_secret():
+    direct = os.getenv("SNWEB_GITHUB_WEBHOOK_SECRET", "").strip()
+    if direct:
+        return direct.encode("utf-8")
+    try:
+        value = GITHUB_WEBHOOK_SECRET_FILE.read_text(encoding="utf-8").strip()
+        return value.encode("utf-8") if value else b""
+    except Exception:
+        return b""
+
+
+@app.post("/hooks/github/release")
+async def github_release_hook(request: Request):
+    secret = _github_webhook_secret()
+    if not secret:
+        raise HTTPException(status_code=503, detail="GitHub release webhook is not configured")
+    raw = await request.body()
+    supplied = request.headers.get("X-Hub-Signature-256", "")
+    expected = "sha256=" + hmac.new(secret, raw, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+    if request.headers.get("X-GitHub-Event", "") != "release":
+        return JSONResponse({"ok": True, "accepted": False, "reason": "not_release"})
+    try:
+        event = json.loads(raw.decode("utf-8"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(event, dict):
+        raise HTTPException(status_code=400, detail="Invalid payload")
+    action = str(event.get("action") or "")
+    release = event.get("release") if isinstance(event.get("release"), dict) else {}
+    repository = event.get("repository") if isinstance(event.get("repository"), dict) else {}
+    full_name = str(repository.get("full_name") or "").lower()
+    expected_repo = os.getenv("SNWEB_GITHUB_REPOSITORY", "nuttawat-arch/sntalkbot").strip().lower()
+    if action not in {"published", "released"} or bool(release.get("draft")) or full_name != expected_repo:
+        return JSONResponse({"ok": True, "accepted": False, "reason": "filtered"})
+    version = str(release.get("tag_name") or release.get("name") or "").strip().lstrip("vV")
+    if not version:
+        raise HTTPException(status_code=400, detail="Release version is missing")
+    payload = {
+        "repository": full_name,
+        "version": version,
+        "url": str(release.get("html_url") or ""),
+    }
+    attempted, delivered = await asyncio.to_thread(_fanout_release_event, payload)
+    return JSONResponse({
+        "ok": True, "accepted": True, "attempted": attempted, "delivered": delivered
+    }, status_code=202)
 
 
 @app.get("/healthz")

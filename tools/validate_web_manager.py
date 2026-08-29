@@ -19,6 +19,7 @@ newtpl=(root/'templates/new_instance.html').read_text(encoding='utf-8')
 insttpl=(root/'templates/instance.html').read_text(encoding='utf-8')
 jobtpl=(root/'templates/job.html').read_text(encoding='utf-8')
 configtpl=(root/'templates/config.html').read_text(encoding='utf-8')
+broadcasttpl=(root/'templates/broadcasts.html').read_text(encoding='utf-8')
 storage=(root/'webmanager/storage.py').read_text(encoding='utf-8')
 password_tool=(root/'webmanager/password_tool.py').read_text(encoding='utf-8')
 js=(root/'static/app.js').read_text(encoding='utf-8')
@@ -40,7 +41,7 @@ checks={
  'all 22 TTUHelper commands documented':all(('`'+x+'`') in mapping for x in expected),
  'delete confirmation on detail + dashboard': 'confirm_name' in app and 'พิมพ์ <strong>{{ bot.name }}</strong>' in insttpl and 'ลบ instance นี้' in dash_tpl and 'confirm_name' in dash_tpl,
  'delete is stopped-only in UI and backend':'{% if not bot.container or not bot.container.running %}' in insttpl and '{% if not bot.running %}' in dash_tpl and 'status_code=409' in app and 'ต้องหยุด instance ก่อนจึงจะลบได้' in app,
- 'runtime HTTP API preferred with JSON fallback only while running':'bot_api_status(path) or runtime_state(path)' in app and 'if not running:' in app and 'Never surface a recent runtime_status.json snapshot after the container' in app,
+ 'runtime status is API-only with no JSON fallback':'def live_state(path: Path, *, running: bool = True):' in app and 'return bot_api_status(path)' in app and 'runtime_status.json' not in app,
  'API uses loopback Bearer token':'http://127.0.0.1:{port}/v1/status' in app and 'Authorization' in app and 'Bearer {token}' in app,
  'multi-user database':'Store(DB_FILE)' in app and 'instance_owners' in storage,
  'first user becomes one atomic superadmin':'create_first_superadmin' in app and 'BEGIN IMMEDIATE' in storage and 'setup_required()' in app,
@@ -51,6 +52,13 @@ checks={
  'TeamTalk verification password is stdin-only and non-persistent':'input=json.dumps(payload, ensure_ascii=False)' in app and 'sys.stdin.buffer.read' in bridge and '"docker","run","--rm","-i"' in bridge and 'verify_teamtalk_password' not in storage,
  'Linux lowercase instance rule':'NEW_BOT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,62}$")' in app and 'pattern="[a-z0-9][a-z0-9_.-]{0,62}"' in newtpl,
  'config all sections':'config_for_form' in app and 'save_config_form' in app,
+ 'central Global Broadcast uses SQLite + loopback API scheduler':'SCHEMA_VERSION = 3' in storage and 'global_broadcast_messages' in storage and 'global_broadcast_state' in storage and 'def _global_broadcast_tick' in app and '/v1/events/global-broadcast' in app and 'bot_api_global_broadcast' in app and '@app.on_event("startup")' in app and 'tts_enabled' in app,
+ 'Global Broadcast is Manager/Full-only and interval bounded':'server_management_enabled' in app and 'global_broadcast' in app and 'interval_minutes' in app and '10080' in app and '_GLOBAL_BROADCAST_RETRY_AFTER' in app,
+ 'Super Admin can manage central broadcast messages':'@app.get("/broadcasts"' in app and '@app.post("/broadcasts")' in app and 'require_superadmin(request)' in app and 'ข้อความ Global Broadcast' in broadcasttpl and 'href="/broadcasts"' in base,
+ 'legacy configs gain disabled Global Broadcast defaults':'_ensure_web_managed_config_defaults' in app and 'random_message_interval' in app and 'random_broadcast_enabled' in app and 'cfg.remove_option("bot", "random_message_interval")' in app and 'cfg.remove_option("tts", "random_broadcast_enabled")' in app and 'cfg.set("global_broadcast", "enabled", "False")' in app and 'tts_enabled' in app,
+ 'config save applies running changes through TTUHelper restart':'kind="config-restart"' in app and 'job_helper_action, "restart", name' in app and 'docker_container(name)' in app,
+ 'new-instance channel field accepts ID or historical path':'Channel ID หรือ Channel path' in newtpl and 'gcid/cid' in newtpl and 'เช่น /music' in newtpl,
+ 'default_channel stays a text field for ID/path switching':'if sk == ("bot", "default_channel"):' in app and 'return "text"' in app and '("bot", "default_channel")' in app and 'gcid/cid' in app,
  'secret fields masked':'safe_secret_key' in app and 'clear_secret' in app,
 'tenant cannot repoint verified TeamTalk identity':'TENANT_LOCKED_CONFIG_KEYS' in app and 'ผู้ใช้ทั่วไปไม่สามารถเปลี่ยน TeamTalk connection/login identity' in app and 'f.locked' in configtpl,
  'password recovery tool uses SQLite, not legacy auth.json':'webmanager.db' in password_tool and 'create_first_superadmin' in password_tool and "default='/etc/sntalkbot-web-manager/auth.json'" not in password_tool,
@@ -59,7 +67,7 @@ checks={
  'realtime jobs':'StreamingResponse' in app and '/jobs/{jid}/stream' in app and 'EventSource' in js and 'data-job-id' in jobtpl,
  'in-page accessible Job dialog':'<dialog id="job-dialog"' in base and 'data-job-form' in system_tpl and 'X-SNTalkBot-Job-Dialog' in app and 'job_created_response' in app and 'showModal()' in js and 'ปิดและกลับไปทำงานต่อ' in js,
  'Job dialog endpoint is immune to form action DOM clobbering':'fetch(form.action' not in js and "form.getAttribute('action')" in js and 'new URL(actionAttr, document.baseURI).href' in js and 'name="action"' in system_tpl,
- 'static JS/CSS URLs are cache-busted by Web Manager version':'/static/app.js?v={{ version }}' in base and '/static/style.css?v={{ version }}' in base and 'src="/static/app.js"' not in base and 'href="/static/style.css"' not in base,
+ 'static JS/CSS URLs use content-hash cache busting':'/static/app.js?v={{ static_rev }}' in base and '/static/style.css?v={{ static_rev }}' in base and 'STATIC_REV' in app and 'hashlib.sha256' in app,
  'Users page hides create form until requested':'data-disclosure-target="create-user-panel"' in users_tpl and 'id="create-user-panel" hidden' in users_tpl and 'aria-expanded="false"' in users_tpl,
  'dashboard isolates malformed instance/realtime data':'Normalize old/new/partial realtime payloads' in app and 'warnings=[]' in app and 'ข้อมูลบางส่วนของ instance นี้อ่านไม่สมบูรณ์' in dash_tpl,
  'Super Admin dashboard uses authoritative batch snapshot and claims only unowned instances':'instances-snapshot' in app and 'docker-list-managed' in app and 'STORE.claim_unowned(names, int(user["id"]))' in app and 'owners_map(names)' in app and 'ผู้สร้าง/เจ้าของ:' in dash_tpl and 'สร้าง/นำเข้าเมื่อ:' in dash_tpl,
@@ -110,6 +118,30 @@ for path in root.rglob('*'):
     if b'\r\n' in path.read_bytes(): crlf.append(str(path.relative_to(root)))
 need(not crlf, 'Linux/Web Manager source line endings are LF-only')
 if crlf: print('CRLF files: '+', '.join(crlf[:12]))
+# Central broadcast persistence/rotation must survive process restart and stay in SQLite.
+try:
+    with tempfile.TemporaryDirectory() as td:
+        spec=__import__('importlib.util').util.spec_from_file_location('_snweb_storage_validation', root/'webmanager/storage.py')
+        smod=__import__('importlib.util').util.module_from_spec(spec); spec.loader.exec_module(smod)
+        store=smod.Store(Path(td)/'webmanager.db')
+        first=store.create_global_broadcast_message('ข้อความหนึ่ง', enabled=True)
+        second=store.create_global_broadcast_message('ข้อความสอง', enabled=True)
+        assert [r['id'] for r in store.list_global_broadcast_messages(enabled_only=True)]==[first,second]
+        assert store.next_global_broadcast_message(0)['id']==first
+        assert store.next_global_broadcast_message(first)['id']==second
+        assert store.next_global_broadcast_message(second)['id']==first
+        assert store.update_global_broadcast_message(first,message='ข้อความหนึ่งแก้ไข',enabled=False)
+        assert store.next_global_broadcast_message(0)['id']==second
+        store.set_global_broadcast_state('manager-a',last_sent=123.5,last_message_id=second)
+        # Re-open through a fresh Store instance to prove persistence rather than RAM-only state.
+        store2=smod.Store(Path(td)/'webmanager.db')
+        state=store2.global_broadcast_state('manager-a')
+        assert state['last_sent']==123.5 and state['last_message_id']==second
+        assert store2.delete_global_broadcast_message(first)
+        need(True,'central Global Broadcast messages, rotation and per-instance schedule state persist in SQLite')
+except Exception as exc:
+    need(False,f'central Global Broadcast SQLite runtime test: {exc!r}')
+
 # Functional tenant/auth test with isolated data/root. No host Docker/TTUHelper action is invoked.
 try:
     with tempfile.TemporaryDirectory() as td:
@@ -137,6 +169,10 @@ r=client.get('/users'); assert r.status_code==200
 assert 'data-disclosure-target="create-user-panel"' in r.text and 'id="create-user-panel" hidden' in r.text
 m=re.search(r'name=\"csrf\" value=\"([^\"]+)\"',r.text); assert m
 csrf=m.group(1)
+# Central Global Broadcast CRUD is Super Admin-only and persists immediately.
+r=client.get('/broadcasts'); assert r.status_code==200 and 'ข้อความ Global Broadcast ส่วนกลาง' in r.text
+r=client.post('/broadcasts',data={'csrf':csrf,'message':'ประกาศส่วนกลางทดสอบ','enabled':'1'},follow_redirects=False); assert r.status_code==303
+rows=mod.STORE.list_global_broadcast_messages(); assert len(rows)==1 and rows[0]['message']=='ประกาศส่วนกลางทดสอบ' and rows[0]['enabled']==1
 # Job-producing forms support in-page dialog metadata while normal redirects remain available.
 rj=client.post('/system/action',data={'csrf':csrf,'action':'doctor'},headers={'X-SNTalkBot-Job-Dialog':'1','X-SNTalkBot-Return-To':'/system'},follow_redirects=False); assert rj.status_code==202
 meta=rj.json(); assert meta['job_id'] and meta['stream_url'].endswith('/stream') and meta['return_to']=='/system'
@@ -151,6 +187,7 @@ r=client2.post('/login',data={'username':'customer','password':'customerpass123'
 r=client2.get('/'); assert r.status_code==200 and 'mine' in r.text and 'other' not in r.text and '/system' not in r.text
 assert client2.get('/instances/other').status_code==404
 assert client2.get('/users').status_code==403
+assert client2.get('/broadcasts').status_code==403
 r=client2.get('/instances/mine/config'); assert r.status_code==200 and 'ล็อกสำหรับบัญชีผู้ใช้ทั่วไป' in r.text
 m2=re.search(r'name="csrf" value="([^"]+)"',r.text); assert m2
 customer_csrf=m2.group(1)
@@ -307,7 +344,6 @@ for want in expected:
 migration_calls=[row for row in flat if row and row[0]=='migrate-ttmediabot']
 assert any(len(row)>=3 and row[2]=='full' for row in migration_calls), migration_calls
 # A stopped container must never surface a fresh-looking runtime_status fallback.
-(mod.bots_root()/'actionbot'/'runtime_status.json').write_text('{"updated_epoch":9999999999,"users_online":99,"player":{"title":"stale"}}')
 rows=mod.list_instances(); assert next(x for x in rows if x['name']=='actionbot')['runtime'] is None
 # Running instances must not show Delete and backend must reject a direct bypass.
 orig_docker_container=mod.docker_container
@@ -459,12 +495,18 @@ ThreadingHTTPServer(("127.0.0.1",int(sys.argv[1])),H).serve_forever()
 '''
         bp=subprocess.Popen([sys.executable,'-c',backend_code,str(backend_port)])
         try:
-            for _ in range(30):
+            reconnect_deadline = time.monotonic() + 8.0
+            while time.monotonic() < reconnect_deadline:
                 try:
-                    with urllib.request.urlopen(f'http://127.0.0.1:{public_port}/healthz',timeout=.3) as resp: payload=resp.read().decode()
-                    if '"version":"test"' in payload: break
-                except Exception: time.sleep(.05)
-            else: raise AssertionError('guardian never reconnected to backend')
+                    with urllib.request.urlopen(f'http://127.0.0.1:{public_port}/healthz', timeout=.5) as resp:
+                        payload = resp.read().decode()
+                    if '"version":"test"' in payload:
+                        break
+                except Exception:
+                    pass
+                time.sleep(.1)
+            else:
+                raise AssertionError('guardian never reconnected to backend within 8 seconds')
             req=urllib.request.Request(f'http://127.0.0.1:{public_port}/echo',data=b'action=doctor',method='POST')
             with urllib.request.urlopen(req,timeout=2) as resp:
                 assert resp.read()==b'post:action=doctor'

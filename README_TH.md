@@ -1,4 +1,4 @@
-# SNTalkBot Web Manager 1.1.12
+# SNTalkBot Web Manager 1.1.16
 
 เว็บแดชบอร์ด self-hosted สำหรับจัดการ SNTalkBot และ TTUHelper หลาย instance โดยไม่ต้องพิมพ์คำสั่ง Linux ทุกครั้ง เหมาะกับเครื่อง Ubuntu/Debian ที่รัน SNTalkBot/TTUHelper และออกแบบให้ใช้ได้ทั้งเจ้าของเครื่องคนเดียวหรือหลายบัญชีลูกค้า
 
@@ -10,13 +10,13 @@ Reverse Proxy/CloudPanel คงชี้ `http://127.0.0.1:28765` เหมื�
 
 Realtime ของ SNTalkBot 5.1.2+ แยก `room_users_online` ออกจาก `server_users_online`; หน้าเว็บใช้จำนวนคนในห้องเป็นตัวเลขหลัก และตัด TeamTalk username ของบอตออกจาก Administrator ทุก session. เมื่อ container หยุด snapshot เดิมจะไม่ถูกนำมาแสดงเป็นข้อมูลสด.
 
-SNTalkBot Full มี 124 canonical commands และ TTUHelper มี 22 commands. `. <queue_position>` / `, <queue_position>` เป็น syntax ของ commands `.`/`,` เดิม จึงไม่เพิ่ม canonical count.
+SNTalkBot Full มี 121 canonical commands และ TTUHelper มี 22 commands. `. <queue_position>` / `, <queue_position>` เป็น syntax ของ commands `.`/`,` เดิม จึงไม่เพิ่ม canonical count.
 
 ## 3 โปรเจกต์ที่ผู้ใช้โฮสต์เอง
 
 1. **SNTalkBot 5.1.0+** — ตัวบอตหลักและ Realtime Status API ภายใน
 2. **TTUHelper 1.5.0+** — จัดการหลาย instance, Docker, update, delete, API port/token และ Linux data layout
-3. **SNTalkBot Web Manager 1.1.12+** — หน้าเว็บจัดการสองโปรเจกต์ด้านบน
+3. **SNTalkBot Web Manager 1.1.16+** — หน้าเว็บจัดการสองโปรเจกต์ด้านบน
 
 ## ความสามารถหลัก
 
@@ -35,7 +35,7 @@ SNTalkBot Full มี 124 canonical commands และ TTUHelper มี 22 comma
 - Migration จาก TTMediaBot Docker Helper `config.json` v1 ผ่าน privileged bridge
 - `doctor`, pull image, update SNTalkBot ที่กำลังรัน และอัปเดต source/helper ผ่านหน้าเว็บ
 - งานยาวแสดง progress/error แบบ realtime ผ่าน SSE
-- Dashboard อ่าน SNTalkBot Realtime API ภายในก่อน และ fallback ไป `runtime_status.json` เมื่อ API ใช้ไม่ได้
+- Dashboard อ่าน SNTalkBot Realtime API ภายในเป็นแหล่งข้อมูลสดเพียงทางเดียว; ถ้า API ใช้ไม่ได้จะแสดงว่า realtime unavailable และไม่แสดง snapshot เก่าเป็นข้อมูลสด
 
 ## สถานะสดที่ Dashboard รองรับ
 
@@ -64,13 +64,13 @@ bootstrap จะตรวจเครื่องมือ, ดาวน์โ�
 
 ## Production layout แบบ Docker-only
 
-Web Manager 1.1.12 ไม่ต้องมี SNTalkBot source checkout ที่ `/opt/sntalkbot` บน production host อีกแล้ว ตัวบอตจริงมาจาก Docker image ที่ TTUHelper กำหนด และข้อมูลแต่ละ instance อยู่ที่ `/opt/sntalkbot-bots/` ตาม production architecture ปัจจุบัน การสร้าง instance และ migration จะอ่าน `config_default.ini` จาก Docker image โดยตรง ส่วน `/opt/ttuhelper` และ `/opt/sntalkbot-web-manager` ยังคงเป็น source/tool บน host ตามหน้าที่ของตนเอง
+Web Manager 1.1.16 ไม่ต้องมี SNTalkBot source checkout ที่ `/opt/sntalkbot` บน production host อีกแล้ว ตัวบอตจริงมาจาก Docker image ที่ TTUHelper กำหนด และข้อมูลแต่ละ instance อยู่ที่ `/opt/sntalkbot-bots/` ตาม production architecture ปัจจุบัน การสร้าง instance และ migration จะอ่าน `config_default.ini` จาก Docker image โดยตรง ส่วน `/opt/ttuhelper` และ `/opt/sntalkbot-web-manager` ยังคงเป็น source/tool บน host ตามหน้าที่ของตนเอง
 
 ## การติดตั้งจาก ZIP
 
 ```bash
 sudo mkdir -p /opt/sntalkbot-web-manager
-sudo unzip -o SNTalkBot-Web-Manager-1.1.12.zip -d /opt/sntalkbot-web-manager
+sudo unzip -o SNTalkBot-Web-Manager-1.1.16.zip -d /opt/sntalkbot-web-manager
 cd /opt/sntalkbot-web-manager
 sudo chmod +x install.sh install_remote.sh
 sudo ./install.sh
@@ -177,3 +177,8 @@ sudo journalctl -u sntalkbot-web-manager -f
 
 GitHub repo `nuttawat-arch/sntalkbot-web-manager` จำเป็นเฉพาะ Git clone / Self-update / `-SyncWebManager`; การติดตั้งจาก ZIP ใช้งานได้โดยไม่ต้องมี repo นี้
 
+
+
+### Channel ID / path compatibility
+
+ค่า `default_channel` รับได้ทั้ง TeamTalk Channel ID เช่น `8`/`"8"` และพาธห้องรูปแบบเดิม เช่น `/music` ในช่องเดียวกัน ค่า `teamtalk.channel` แบบตัวเลขจาก TTMediaBot รุ่นเก่าจะถูกนำเข้าใช้งานต่อได้โดยไม่ต้องให้ผู้ใช้แปลงเป็นชื่อห้องเอง และสามารถใช้คำสั่ง `gcid`/`cid` ดู Channel ID แล้วนำตัวเลขมาใส่ได้โดยตรง

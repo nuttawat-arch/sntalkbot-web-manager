@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Global Broadcast — SNTalkBot Web Manager{% endblock %}
+{% block content %}
+<h2>ข้อความ Global Broadcast ส่วนกลาง</h2>
+<p>ข้อความชุดนี้เป็นแหล่งประกาศส่วนกลางเพียงชุดเดียว เก็บใน SQLite ของ Web Manager และส่งเฉพาะ Manager/Full Bot ที่เปิด <code>[global_broadcast] enabled = True</code> เท่านั้น แต่ละบอตกำหนดช่วงเวลาเองได้ 1–10,080 นาที และเลือก <code>tts_enabled = True</code> ได้หากต้องการพูดข้อความเดียวกันด้วย TTS โดยไม่มี messages.txt หรือ scheduler ซ้ำ</p>
+<section aria-labelledby="add-broadcast"><h3 id="add-broadcast">เพิ่มข้อความ</h3>
+<form method="post" action="/broadcasts">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<label for="new-message">ข้อความ</label><br><textarea id="new-message" name="message" rows="4" required></textarea><br>
+<label><input type="checkbox" name="enabled" value="1" checked> เปิดใช้ข้อความนี้</label><br>
+<button type="submit">เพิ่มข้อความ</button></form></section>
+<section aria-labelledby="current-broadcasts"><h3 id="current-broadcasts">ข้อความปัจจุบัน</h3>
+{% if messages %}
+<ol>{% for row in messages %}<li>
+<form method="post" action="/broadcasts/{{ row.id }}/update">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<label for="message-{{ row.id }}">ข้อความ #{{ row.id }}</label><br>
+<textarea id="message-{{ row.id }}" name="message" rows="4" required>{{ row.message }}</textarea><br>
+<label><input type="checkbox" name="enabled" value="1"{% if row.enabled %} checked{% endif %}> เปิดใช้</label>
+<button type="submit">บันทึก</button></form>
+<form method="post" action="/broadcasts/{{ row.id }}/delete" class="inline">
+<input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">ลบข้อความ #{{ row.id }}</button></form>
+</li>{% endfor %}</ol>
+{% else %}<p>ยังไม่มีข้อความส่วนกลาง ระบบจะไม่ส่งอะไรจนกว่าจะเพิ่มข้อความ</p>{% endif %}
+</section>
+{% endblock %}

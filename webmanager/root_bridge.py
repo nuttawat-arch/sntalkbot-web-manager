@@ -300,7 +300,7 @@ def migrate_ttmediabot(cfg, args):
             if target.is_dir() and target.parent==dest:
                 run(["chown","-R","10001:10001",target],check=False)
                 run(["chmod","2770",target],check=False)
-                for fname,mode in (("config.ini","0660"),("limits.conf","0660"),("instance.conf","0640"),("runtime_status.json","0640")):
+                for fname,mode in (("config.ini","0660"),("limits.conf","0660"),("instance.conf","0640")):
                     fp=target/fname
                     if fp.exists(): run(["chmod",mode,fp],check=False)
     return 0

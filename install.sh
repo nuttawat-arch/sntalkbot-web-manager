@@ -76,6 +76,13 @@ print(secrets.token_urlsafe(64))
 PY
 fi
 chown root:"$SERVICE_USER" "$ETC_DIR/session_secret"; chmod 0640 "$ETC_DIR/session_secret"
+if [[ ! -s "$ETC_DIR/github_webhook_secret" ]]; then
+  python3 - <<PY > "$ETC_DIR/github_webhook_secret"
+import secrets
+print(secrets.token_urlsafe(48))
+PY
+fi
+chown root:"$SERVICE_USER" "$ETC_DIR/github_webhook_secret"; chmod 0640 "$ETC_DIR/github_webhook_secret"
 
 install -d -m 0755 /usr/local/lib/sntalkbot-web-manager
 install -o root -g root -m 0755 "$TARGET/webmanager/root_bridge.py" "$ROOT_BRIDGE"
@@ -108,7 +115,7 @@ if [[ -d "$BOTS_ROOT" ]]; then
   chmod 2770 "$BOTS_ROOT" 2>/dev/null || true
   find "$BOTS_ROOT" -mindepth 1 -maxdepth 1 -type d -exec chgrp "$data_group" {} \; -exec chmod 2770 {} \; 2>/dev/null || true
   find "$BOTS_ROOT" -mindepth 2 -maxdepth 2 -type f \( -name config.ini -o -name limits.conf \) -exec chgrp "$data_group" {} \; -exec chmod 0660 {} \; 2>/dev/null || true
-  find "$BOTS_ROOT" -mindepth 2 -maxdepth 2 -type f \( -name instance.conf -o -name runtime_status.json \) -exec chgrp "$data_group" {} \; -exec chmod 0640 {} \; 2>/dev/null || true
+  find "$BOTS_ROOT" -mindepth 2 -maxdepth 2 -type f \( -name instance.conf \) -exec chgrp "$data_group" {} \; -exec chmod 0640 {} \; 2>/dev/null || true
 fi
 
 ENV_FILE="/etc/default/sntalkbot-web-manager"
@@ -130,6 +137,8 @@ write_default SNWEB_APP_BIND "$APP_BIND"
 write_default SNWEB_APP_PORT "$APP_PORT"
 write_default SNWEB_DATA_DIR "$DATA_DIR"
 write_default SNWEB_SESSION_SECRET_FILE "$ETC_DIR/session_secret"
+write_default SNWEB_GITHUB_WEBHOOK_SECRET_FILE "$ETC_DIR/github_webhook_secret"
+write_default SNWEB_GITHUB_REPOSITORY "nuttawat-arch/sntalkbot"
 write_default SNWEB_DB_FILE "$DATA_DIR/webmanager.db"
 write_default SNWEB_ROOT_BRIDGE "$ROOT_BRIDGE"
 write_default SNWEB_COOKIE_SECURE "false"
