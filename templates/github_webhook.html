@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block title %}GitHub Webhook Secret{% endblock %}{% block content %}
+<h2>GitHub Release Webhook</h2>
+<p class="warning">Secret นี้ใช้ยืนยันว่า webhook มาจาก GitHub ห้ามส่งให้บุคคลอื่น และอย่าใส่ใน Git repository</p>
+<dl><dt>Payload URL</dt><dd><code>{{ webhook.callback_url }}</code></dd><dt>Content type</dt><dd><code>application/json</code></dd><dt>Event</dt><dd>Releases</dd><dt>Repository</dt><dd><code>{{ webhook.repository }}</code></dd></dl>
+<label for="github-webhook-secret">Secret</label>
+<textarea id="github-webhook-secret" rows="3" readonly>{{ secret }}</textarea>
+<p>คัดลอกค่าทั้งหมดในช่อง Secret ไปใส่ GitHub จากนั้นกลับหน้า <a href="/system">ระบบ/อัปเดต</a> เพื่อตรวจสถานะ</p>
+{% endblock %}

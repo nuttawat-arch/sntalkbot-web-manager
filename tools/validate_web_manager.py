@@ -30,6 +30,7 @@ js=(root/'static/app.js').read_text(encoding='utf-8')
 help_tpl=(root/'templates/help.html').read_text(encoding='utf-8')
 dash_tpl=(root/'templates/dashboard.html').read_text(encoding='utf-8')
 system_tpl=(root/'templates/system.html').read_text(encoding='utf-8')
+github_tpl=(root/'templates/github_webhook.html').read_text(encoding='utf-8')
 users_tpl=(root/'templates/users.html').read_text(encoding='utf-8')
 error_tpl=(root/'templates/error.html').read_text(encoding='utf-8')
 guardian=(root/'guardian/snweb_guardian.py').read_text(encoding='utf-8')
@@ -56,7 +57,7 @@ checks={
  'TeamTalk verification password is stdin-only and non-persistent':'input=json.dumps(payload, ensure_ascii=False)' in app and 'sys.stdin.buffer.read' in bridge and '"docker","run","--rm","-i"' in bridge and 'verify_teamtalk_password' not in storage,
  'Linux lowercase instance rule':'NEW_BOT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,62}$")' in app and 'pattern="[a-z0-9][a-z0-9_.-]{0,62}"' in newtpl,
  'config all sections':'config_for_form' in app and 'save_config_form' in app,
- 'central Global Broadcast uses SQLite + loopback API scheduler':'SCHEMA_VERSION = 4' in storage and 'global_broadcast_messages' in storage and 'global_broadcast_state' in storage and 'def _global_broadcast_tick' in app and '/v1/events/global-broadcast' in app and 'bot_api_global_broadcast' in app and '@app.on_event("startup")' in app and 'tts_enabled' in app,
+ 'central Global Broadcast uses SQLite + loopback API scheduler':'SCHEMA_VERSION = 5' in storage and 'global_broadcast_messages' in storage and 'global_broadcast_state' in storage and 'def _global_broadcast_tick' in app and '/v1/events/global-broadcast' in app and 'bot_api_global_broadcast' in app and '@app.on_event("startup")' in app and 'tts_enabled' in app,
  'Global Broadcast is Manager/Full-only and interval bounded':'server_management_enabled' in app and 'global_broadcast' in app and 'interval_minutes' in app and '10080' in app and '_GLOBAL_BROADCAST_RETRY_AFTER' in app,
  'Super Admin can manage central broadcast messages':'@app.get("/broadcasts"' in app and '@app.post("/broadcasts")' in app and 'require_superadmin(request)' in app and 'ข้อความ Global Broadcast' in broadcasttpl and 'href="/broadcasts"' in base,
  'Global Broadcast composer uses one multiline textarea per message':'data-add-broadcast-message' in broadcasttpl and 'name="message"' in broadcasttpl and 'หนึ่งช่องคือหนึ่งข้อความ' in broadcasttpl and 'data-broadcast-message-fields' in js and 'form.getlist("message")' in app,
@@ -81,6 +82,9 @@ checks={
  'Super Admin dashboard uses authoritative batch snapshot and claims only unowned instances':'instances-snapshot' in app and 'docker-list-managed' in app and 'STORE.claim_unowned(names, int(user["id"]))' in app and 'owners_map(names)' in app and 'ผู้สร้าง/เจ้าของ:' in dash_tpl and 'สร้าง/นำเข้าเมื่อ:' in dash_tpl,
  'Dashboard realtime is one SSE stream with parallel bot probes':'/dashboard/live' in app and '_dashboard_live_rows' in app and 'asyncio.gather' in app and "new EventSource('/dashboard/live')" in js and 'dashboard-live-announcer' in dash_tpl,
  'System remote update probes do not block initial HTML':'system_status(False, include_expensive=False)' in app and '/system/remote-status' in app and 'ThreadPoolExecutor(max_workers=5)' in app and "fetch('/system/remote-status'" in js and 'การตรวจ GitHub/Docker Registry ทำต่อเบื้องหลัง' in system_tpl,
+ 'GitHub release webhook setup is visible to Super Admin':'GitHub Release Webhook / แจ้งรุ่นใหม่' in system_tpl and '/system/github-webhook-secret' in app and 'Payload URL' in github_tpl and 'Releases' in github_tpl and 'github_webhook_status' in app,
+ 'GitHub webhook status persists in SQLite':'CREATE TABLE IF NOT EXISTS system_state' in storage and 'github_release_webhook' in app and 'delivery_id' in app and 'received_at' in app,
+ 'Manager/Full release notifications have explicit bulk enable action':'enable-release-notifications' in app and 'job_enable_release_notifications' in app and 'role not in ("manager", "full")' in app and 'broadcast_enabled", "True"' in app,
  'Dashboard batch snapshot has rolling-upgrade compatibility fallback':'_local_instance_snapshot' in app and 'Old root bridge compatibility only' in app and 'instances-snapshot' in bridge and 'docker-list-managed' in bridge,
  'last-resort 500 boundary is static and carries request id':'class LastResortErrorMiddleware' in app and '_last_resort_error_html' in app and 'X-SNTalkBot-Request-ID' in app and '@app.exception_handler(Exception)' in app and 'Request ID' in app,
  'realtime instance SSE':'/instances/{name}/live' in app and 'await asyncio.sleep(0.5)' in app and 'live-instance' in insttpl and 'container_running' in app and 'บอตหยุดอยู่ — ไม่มีข้อมูลสด' in js,

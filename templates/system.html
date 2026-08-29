@@ -14,6 +14,20 @@
 <form method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><button name="action" value="install-stack">ตรวจและติดตั้ง/ซ่อม Core Stack</button></form>
 <h3>อัปเดต</h3><form class="actions" method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}">
 <button name="action" value="update-web">อัปเดต Web Manager</button><button name="action" value="update-helper">อัปเดต TTUHelper + install</button><button name="action" value="pull-image">Pull SNTalkBot image ล่าสุด</button><button name="action" value="update-running">อัปเดตบอตที่กำลังรันทั้งหมด</button><button name="action" value="doctor">รัน doctor</button></form>
+
+<h3>GitHub Release Webhook / แจ้งรุ่นใหม่</h3>
+<dl>
+<dt>Webhook receiver</dt><dd>{% if webhook.configured %}<strong>พร้อม</strong>{% else %}<strong>ยังไม่พร้อม</strong>{% endif %}</dd>
+<dt>Payload URL</dt><dd><code>{{ webhook.callback_url }}</code></dd>
+<dt>Repository</dt><dd><code>{{ webhook.repository }}</code></dd>
+<dt>GitHub ติดต่อครั้งล่าสุด</dt><dd>{% if webhook.last.received_at %}{{ webhook.last.received_at }} — {{ webhook.last.event or 'event' }}{% if webhook.last.version %} {{ webhook.last.version }}{% endif %}{% if webhook.last.accepted %} — รับแล้ว; ส่งต่อ {{ webhook.last.delivered or 0 }}/{{ webhook.last.attempted or 0 }} instance{% elif webhook.last.reason %} — {{ webhook.last.reason }}{% endif %}{% else %}ยังไม่เคยได้รับ webhook ที่ลงลายเซ็นถูกต้อง{% endif %}</dd>
+</dl>
+<p>ตั้ง Webhook ที่ GitHub repository <code>{{ webhook.repository }}</code> เพียงครั้งเดียว โดยเลือก event <strong>Releases</strong> และใช้ Secret ของหน้านี้ หลังจากนั้น Full Publish จะ push version tag และ GitHub จะสร้าง Release/ส่ง webhook อัตโนมัติ</p>
+<form method="post" action="/system/github-webhook-secret"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">แสดง Secret สำหรับตั้ง GitHub Webhook</button></form>
+{% if release_bots %}
+<p>Manager/Full ที่พบ: {% for bot in release_bots %}<code>{{ bot.name }}</code> ({{ 'เปิด' if bot.enabled and bot.broadcast_enabled else 'ยังไม่เปิด' }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+<form method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><button name="action" value="enable-release-notifications">เปิดแจ้งรุ่นใหม่ผ่าน TeamTalk ให้ Manager/Full ทั้งหมด</button></form>
+{% else %}<p>ยังไม่พบ Manager/Full instance</p>{% endif %}
 <h3>Cookies ทุก Player/Full</h3><form method="post" action="/system/cookies-all" enctype="multipart/form-data" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><label for="all_cookie_file">Netscape cookies.txt</label><input id="all_cookie_file" type="file" name="cookie_file" required><button type="submit">แทน cookies ให้ Player/Full ทุกตัว</button></form>
 <h3>หลาย instance</h3><form class="actions" method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><button name="action" value="start-all">เริ่มทั้งหมด</button><button name="action" value="stop-all">หยุดทั้งหมด</button></form>
 <p class="warning">เมนูนี้มีเฉพาะ Super Admin งานสิทธิ์ root จะผ่าน privileged bridge ที่มี allowlist ไม่ได้เปิด root terminal ให้หน้าเว็บ</p>

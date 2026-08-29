@@ -8,7 +8,7 @@ from pathlib import Path
 import secrets
 import sqlite3
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class Store:
@@ -78,6 +78,10 @@ class Store:
                 "last_message_id INTEGER NOT NULL DEFAULT 0,"
                 "remaining_ids TEXT NOT NULL DEFAULT '[]',"
                 "cycle_ids TEXT NOT NULL DEFAULT '[]')"
+            )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS system_state ("
+                "key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TEXT NOT NULL)"
             )
             state_cols = {str(row[1]) for row in db.execute("PRAGMA table_info(global_broadcast_state)").fetchall()}
             if "remaining_ids" not in state_cols:
@@ -302,6 +306,30 @@ class Store:
         result["remaining_ids_after"] = remaining_after
         result["cycle_ids_after"] = cycle_ids
         return result
+
+    def set_system_state(self, key: str, value):
+        now = datetime.now(timezone.utc).isoformat()
+        payload = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO system_state(key,value,updated_at) VALUES(?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+                (str(key), payload, now),
+            )
+
+    def get_system_state(self, key: str, default=None):
+        with self.connect() as db:
+            row = db.execute("SELECT value,updated_at FROM system_state WHERE key=?", (str(key),)).fetchone()
+        if not row:
+            return default
+        try:
+            value = json.loads(str(row["value"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return default
+        if isinstance(value, dict):
+            value = dict(value)
+            value.setdefault("updated_at", str(row["updated_at"]))
+        return value
 
     @staticmethod
     def _hash(password: str, salt: bytes) -> bytes:

@@ -42,6 +42,7 @@ DEFAULT_BOTS_ROOT = Path("/opt/sntalkbot-bots")
 TTU_SOURCE = Path(os.getenv("SNWEB_TTU_SOURCE", "/opt/ttuhelper"))
 TTU_REPO = os.getenv("SNWEB_TTU_REPO", "https://github.com/nuttawat-arch/ttuhelper.git")
 WEB_REPO = os.getenv("SNWEB_WEB_REPO", "https://github.com/nuttawat-arch/sntalkbot-web-manager.git")
+GITHUB_REPOSITORY = os.getenv("SNWEB_GITHUB_REPOSITORY", "nuttawat-arch/sntalkbot").strip().lower()
 IMAGE_REPO_DEFAULT = os.getenv("TTU_IMAGE_REPO", "nuttawat0295/sntalkbot")
 IMAGE_TAG_DEFAULT = os.getenv("TTU_TAG", "latest")
 SECRET_KEYS = ("password", "token", "api_key", "license_key", "secret")
@@ -1741,10 +1742,79 @@ def help_page(request: Request):
     user=require_login(request)
     return templates.TemplateResponse("help.html", {"request": request, "user":user, "csrf": csrf_token(request), "version": VERSION})
 
+def _public_base_url(request: Request):
+    explicit = os.getenv("SNWEB_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    proto = str(request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",", 1)[0].strip()
+    host = str(request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc).split(",", 1)[0].strip()
+    return f"{proto}://{host}".rstrip("/")
+
+def github_webhook_status(request: Request):
+    return {
+        "configured": bool(_github_webhook_secret()),
+        "callback_url": _public_base_url(request) + "/hooks/github/release",
+        "repository": GITHUB_REPOSITORY,
+        "last": STORE.get_system_state("github_release_webhook", {}) or {},
+    }
+
+def release_notification_rows():
+    rows=[]
+    root=bots_root()
+    if not root.is_dir():
+        return rows
+    for path in sorted(root.iterdir(), key=lambda x: x.name.lower()):
+        if not path.is_dir() or not BOT_NAME_RE.fullmatch(path.name) or not (path / "config.ini").is_file():
+            continue
+        try:
+            cfg=_ensure_web_managed_config_defaults(read_config(path / "config.ini"))
+            role=read_instance_role(path, cfg)
+        except Exception:
+            continue
+        if role not in ("manager", "full"):
+            continue
+        rows.append({
+            "name": path.name, "role": role,
+            "enabled": cfg.getboolean("updates", "enabled", fallback=False),
+            "broadcast_enabled": cfg.getboolean("updates", "broadcast_enabled", fallback=True),
+        })
+    return rows
+
+def job_enable_release_notifications():
+    rows=release_notification_rows()
+    changed=0
+    restarted=0
+    for row in rows:
+        path=bots_root() / row["name"]
+        cfg=_ensure_web_managed_config_defaults(read_config(path / "config.ini"))
+        if not cfg.has_section("updates"):
+            cfg.add_section("updates")
+        before=(cfg.getboolean("updates","enabled",fallback=False), cfg.getboolean("updates","broadcast_enabled",fallback=True))
+        cfg.set("updates", "enabled", "True")
+        cfg.set("updates", "broadcast_enabled", "True")
+        cfg.set("updates", "repository", GITHUB_REPOSITORY)
+        tmp=path / "config.ini.tmp"
+        with tmp.open("w", encoding="utf-8") as f:
+            cfg.write(f)
+        os.chmod(tmp, 0o660)
+        os.replace(tmp, path / "config.ini")
+        try:
+            os.chown(path / "config.ini", 10001, 10001)
+        except PermissionError:
+            pass
+        if before != (True, True):
+            changed += 1
+        cont=docker_container(row["name"]) or {}
+        if cont.get("running"):
+            job_emit(f"Restart {row['name']} เพื่อใช้การแจ้ง GitHub Release")
+            job_helper_action("restart", row["name"])
+            restarted += 1
+    job_emit(f"เปิดการแจ้ง GitHub Release สำหรับ Manager/Full {len(rows)} instance; เปลี่ยนค่า {changed}; restart {restarted}")
+
 @app.get("/system", response_class=HTMLResponse)
 def system_page(request: Request):
     user=require_superadmin(request)
-    return templates.TemplateResponse("system.html", {"request": request, "user":user, "system": system_status(False, include_expensive=False), "csrf": csrf_token(request), "version": VERSION})
+    return templates.TemplateResponse("system.html", {"request": request, "user":user, "system": system_status(False, include_expensive=False), "webhook": github_webhook_status(request), "release_bots": release_notification_rows(), "csrf": csrf_token(request), "version": VERSION})
 
 
 @app.post("/system/action")
@@ -1759,6 +1829,7 @@ async def system_action(request: Request, action: str = Form(...), csrf: str = F
         "doctor": ("ตรวจระบบ", job_helper_action, ("doctor",)),
         "start-all": ("เริ่มบอตทั้งหมด", job_helper_action, ("start-all",)),
         "stop-all": ("หยุดบอตทั้งหมด", job_helper_action, ("stop-all",)),
+        "enable-release-notifications": ("เปิดการแจ้ง GitHub Release", job_enable_release_notifications, ()),
     }
     if action not in mapping:
         raise HTTPException(status_code=400, detail="Unknown action")
@@ -2126,6 +2197,17 @@ def _github_webhook_secret():
         return b""
 
 
+@app.post("/system/github-webhook-secret", response_class=HTMLResponse)
+def github_webhook_secret_page(request: Request, csrf: str = Form(...)):
+    user=require_superadmin(request); check_csrf(request, csrf)
+    secret=_github_webhook_secret().decode("utf-8", "replace")
+    if not secret:
+        raise HTTPException(status_code=503, detail="GitHub release webhook secret is not configured")
+    return templates.TemplateResponse("github_webhook.html", {
+        "request": request, "user": user, "webhook": github_webhook_status(request),
+        "secret": secret, "csrf": csrf_token(request), "version": VERSION,
+    })
+
 @app.post("/hooks/github/release")
 async def github_release_hook(request: Request):
     secret = _github_webhook_secret()
@@ -2136,7 +2218,13 @@ async def github_release_hook(request: Request):
     expected = "sha256=" + hmac.new(secret, raw, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(supplied, expected):
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
-    if request.headers.get("X-GitHub-Event", "") != "release":
+    event_name = request.headers.get("X-GitHub-Event", "")
+    delivery_id = request.headers.get("X-GitHub-Delivery", "")
+    if event_name != "release":
+        STORE.set_system_state("github_release_webhook", {
+            "event": event_name or "unknown", "accepted": False, "reason": "not_release",
+            "delivery_id": delivery_id, "received_at": datetime.now(timezone.utc).isoformat(),
+        })
         return JSONResponse({"ok": True, "accepted": False, "reason": "not_release"})
     try:
         event = json.loads(raw.decode("utf-8"))
@@ -2148,8 +2236,13 @@ async def github_release_hook(request: Request):
     release = event.get("release") if isinstance(event.get("release"), dict) else {}
     repository = event.get("repository") if isinstance(event.get("repository"), dict) else {}
     full_name = str(repository.get("full_name") or "").lower()
-    expected_repo = os.getenv("SNWEB_GITHUB_REPOSITORY", "nuttawat-arch/sntalkbot").strip().lower()
+    expected_repo = GITHUB_REPOSITORY
     if action not in {"published", "released"} or bool(release.get("draft")) or full_name != expected_repo:
+        STORE.set_system_state("github_release_webhook", {
+            "event": "release", "action": action, "accepted": False, "reason": "filtered",
+            "repository": full_name, "delivery_id": delivery_id,
+            "received_at": datetime.now(timezone.utc).isoformat(),
+        })
         return JSONResponse({"ok": True, "accepted": False, "reason": "filtered"})
     version = str(release.get("tag_name") or release.get("name") or "").strip().lstrip("vV")
     if not version:
@@ -2160,6 +2253,11 @@ async def github_release_hook(request: Request):
         "url": str(release.get("html_url") or ""),
     }
     attempted, delivered = await asyncio.to_thread(_fanout_release_event, payload)
+    STORE.set_system_state("github_release_webhook", {
+        "event": "release", "action": action, "accepted": True, "repository": full_name,
+        "version": version, "url": payload["url"], "attempted": attempted, "delivered": delivered,
+        "delivery_id": delivery_id, "received_at": datetime.now(timezone.utc).isoformat(),
+    })
     return JSONResponse({
         "ok": True, "accepted": True, "attempted": attempted, "delivered": delivered
     }, status_code=202)
