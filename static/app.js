@@ -391,8 +391,7 @@ document.addEventListener('click', (e) => {
     .then((data) => {
       const web = document.getElementById('remote-web');
       const helper = document.getElementById('remote-helper');
-      const image = document.getElementById('remote-image');
-      const localImage = document.getElementById('local-image');
+      const remoteBot = document.getElementById('remote-bot');
       const botVersion = document.getElementById('local-bot-version');
       if (web) {
         const local = web.dataset.localVersion || '';
@@ -403,10 +402,9 @@ document.addEventListener('click', (e) => {
         helper.textContent = data.helper_remote ? `| รุ่นบน GitHub ${data.helper_remote}${local && data.helper_remote !== local ? ' — มี TTUHelper รุ่นใหม่' : ''}` : '| ตรวจรุ่นบน GitHub ไม่สำเร็จ';
       }
       if (botVersion) botVersion.textContent = data.bot_image_version || 'ยังอ่านเวอร์ชันไม่ได้';
-      if (localImage) localImage.textContent = data.local_image_digest ? `Local digest: ${data.local_image_digest}` : 'Local digest: ยังอ่านไม่ได้';
-      if (image) {
-        const local = data.local_image_digest || '';
-        image.textContent = data.remote_image_digest ? `Remote latest: ${data.remote_image_digest}${local ? (data.remote_image_digest === local ? ' — ตรงกับ latest' : ' — มี image ใหม่') : ''}` : 'Remote latest: ตรวจไม่สำเร็จ';
+      if (remoteBot) {
+        const local = data.bot_image_version || '';
+        remoteBot.textContent = data.bot_remote ? `| รุ่นบน GitHub ${data.bot_remote}${local && data.bot_remote !== local ? ' — มี SNTalkBot image รุ่นใหม่' : ''}` : '| ตรวจรุ่นบน GitHub ไม่สำเร็จ';
       }
       status.textContent = 'ตรวจรุ่นล่าสุดเบื้องหลังเสร็จแล้ว';
     })

@@ -2,3 +2,9 @@
 [hidden]{display:none!important}dialog{width:min(54rem,92vw);max-height:86vh;padding:1rem;border:2px solid currentColor;border-radius:.5rem}dialog::backdrop{background:rgba(0,0,0,.45)}.dialog-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start}.dialog-head h2{margin-top:0}.danger-zone{margin-top:1rem}.instance-warning{margin:.5rem 0}
 
 .sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
+
+/* Accessible server-rendered sub-navigation: works without JavaScript and is
+   announced as normal navigation by screen readers. */
+.subtabs{display:flex;flex-wrap:wrap;gap:.5rem;margin:1rem 0;padding:.5rem 0;border-bottom:1px solid currentColor}
+.subtabs a{padding:.45rem .7rem;text-decoration:underline}
+.subtabs a[aria-current="page"]{font-weight:700;text-decoration:none;border:2px solid currentColor;border-bottom-width:4px}

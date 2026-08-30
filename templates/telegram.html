@@ -22,5 +22,5 @@
 <button type="submit">บันทึก Telegram ส่วนกลาง</button>
 </form>
 <h3>ค่าเฉพาะ instance เดิม</h3>
-<p class="minor">ช่อง <code>[telegram] telegram_bot_token</code> และ <code>default_chat_id</code> ใน config ของแต่ละบอตยังคงอยู่เพื่อ compatibility และใช้เป็น fallback เมื่อไม่ได้ตั้งค่าส่วนกลาง</p>
+<p class="minor">ถ้า instance ใส่ <code>[telegram] telegram_bot_token</code> ของเจ้าของเอง ระบบจะใช้ token และ Chat ID ของ instance นั้นเท่านั้น และจะไม่ผสมหรือส่งผ่าน Telegram ส่วนกลาง ค่า Telegram ส่วนกลางใช้เฉพาะ instance ที่ไม่ได้ตั้ง token ของตัวเอง</p>
 {% endblock %}

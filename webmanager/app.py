@@ -42,6 +42,7 @@ DEFAULT_BOTS_ROOT = Path("/opt/sntalkbot-bots")
 TTU_SOURCE = Path(os.getenv("SNWEB_TTU_SOURCE", "/opt/ttuhelper"))
 TTU_REPO = os.getenv("SNWEB_TTU_REPO", "https://github.com/nuttawat-arch/ttuhelper.git")
 WEB_REPO = os.getenv("SNWEB_WEB_REPO", "https://github.com/nuttawat-arch/sntalkbot-web-manager.git")
+BOT_REPO = os.getenv("SNWEB_BOT_REPO", "https://github.com/nuttawat-arch/sntalkbot.git")
 GITHUB_REPOSITORY = os.getenv("SNWEB_GITHUB_REPOSITORY", "nuttawat-arch/sntalkbot").strip().lower()
 IMAGE_REPO_DEFAULT = os.getenv("TTU_IMAGE_REPO", "nuttawat0295/sntalkbot")
 IMAGE_TAG_DEFAULT = os.getenv("TTU_TAG", "latest")
@@ -490,6 +491,34 @@ def bot_api_global_broadcast(path: Path, message: str):
             return 200 <= int(resp.status) < 300
     except Exception:
         return False
+
+
+def bot_api_apply_config(path: Path, changed_keys):
+    """Apply saved config to a running bot through its authenticated loopback API."""
+    meta = read_instance_meta(path)
+    try:
+        port = int(meta.get("api_port") or 0)
+    except ValueError:
+        port = 0
+    token = meta.get("api_token", "")
+    if not port or not token:
+        return None
+    body = json.dumps({"changed_keys": list(changed_keys or [])}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/v1/config/apply",
+        data=body, method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            data = json.loads(resp.read(256 * 1024).decode("utf-8", "replace"))
+            return data if isinstance(data, dict) and data.get("ok") else None
+    except Exception:
+        return None
 
 
 def _fanout_release_event(payload: dict):
@@ -1189,6 +1218,26 @@ def _ensure_web_managed_config_defaults(cfg):
     return cfg
 
 
+CONFIG_TAB_DEFS = [
+    ("general", "ทั่วไป/การเชื่อมต่อ", {"features", "server", "bot"}),
+    ("playback", "การเล่นเสียง", {"playback", "ytdlp"}),
+    ("moderation", "จัดการ/ความปลอดภัย", {"exclusion", "accounts", "account_requests"}),
+    ("speech", "เสียงพูด/บริการ AI", {"tts", "groq", "weather"}),
+    ("integrations", "การเชื่อมต่อ/แจ้งเตือน", {"telegram", "updates", "global_broadcast"}),
+    ("advanced", "ขั้นสูง", {"ssh", "teamtalk_license"}),
+]
+
+def _config_tab_for_section(section):
+    name = str(section or "").lower()
+    for tab, _label, names in CONFIG_TAB_DEFS:
+        if name in names:
+            return tab
+    return "advanced"
+
+def config_tab_rows(sections):
+    present = {row.get("tab") for row in sections}
+    return [{"id": tab, "label": label} for tab, label, _names in CONFIG_TAB_DEFS if tab in present]
+
 def config_for_form(path: Path, user=None):
     cfg = _ensure_web_managed_config_defaults(read_config(path / "config.ini"))
     is_superadmin = bool(user and user.get("role") == "superadmin")
@@ -1205,12 +1254,13 @@ def config_for_form(path: Path, user=None):
                 "description": _field_description(section, key),
                 "options": CONFIG_ENUMS.get((section.lower(), key.lower()), []),
             })
-        sections.append({"name": section, "fields": fields})
+        sections.append({"name": section, "fields": fields, "tab": _config_tab_for_section(section)})
     return sections
 
 
 def save_config_form(path: Path, form, user=None):
     cfg = _ensure_web_managed_config_defaults(read_config(path / "config.ini"))
+    before = {(section.lower(), key.lower()): str(value) for section in cfg.sections() for key, value in cfg.items(section)}
     is_superadmin = bool(user and user.get("role") == "superadmin")
     clear_secrets = set(form.getlist("clear_secret"))
     for section in cfg.sections():
@@ -1272,6 +1322,12 @@ def save_config_form(path: Path, form, user=None):
         os.chown(path / "config.ini", 10001, 10001)
     except PermissionError:
         pass
+    changed = []
+    for section in cfg.sections():
+        for key, value in cfg.items(section):
+            if before.get((section.lower(), key.lower())) != str(value):
+                changed.append(f"{section.lower()}.{key.lower()}")
+    return changed
 
 
 def job_cookie_check(name):
@@ -1713,20 +1769,19 @@ async def dashboard_live(request: Request):
 
 
 def remote_update_status():
-    # All network/Docker-heavy checks run outside the initial HTML request and in
-    # parallel. The System page is immediately keyboard/screen-reader usable.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+    # The normal System overview is intentionally version-oriented. Digest and
+    # registry diagnostics remain available to backend/doctor code, but are not
+    # fetched just to render the everyday update summary.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
         fw = pool.submit(remote_version, WEB_REPO)
         fh = pool.submit(remote_version, TTU_REPO)
-        fri = pool.submit(remote_image_digest)
-        fli = pool.submit(local_image_digest)
-        fbv = pool.submit(bot_image_version)
+        fb = pool.submit(remote_version, BOT_REPO)
+        fl = pool.submit(bot_image_version)
         return {
             "web_remote": fw.result(),
             "helper_remote": fh.result(),
-            "remote_image_digest": fri.result(),
-            "local_image_digest": fli.result(),
-            "bot_image_version": fbv.result(),
+            "bot_remote": fb.result(),
+            "bot_image_version": fl.result(),
         }
 
 
@@ -1782,43 +1837,53 @@ def release_notification_rows():
 
 def job_enable_release_notifications():
     rows=release_notification_rows()
-    changed=0
+    changed_instances=0
+    applied_live=0
     restarted=0
     for row in rows:
         path=bots_root() / row["name"]
         cfg=_ensure_web_managed_config_defaults(read_config(path / "config.ini"))
         if not cfg.has_section("updates"):
             cfg.add_section("updates")
-        before=(cfg.getboolean("updates","enabled",fallback=False), cfg.getboolean("updates","broadcast_enabled",fallback=True))
-        cfg.set("updates", "enabled", "True")
-        cfg.set("updates", "broadcast_enabled", "True")
-        cfg.set("updates", "repository", GITHUB_REPOSITORY)
-        tmp=path / "config.ini.tmp"
-        with tmp.open("w", encoding="utf-8") as f:
-            cfg.write(f)
-        os.chmod(tmp, 0o660)
-        os.replace(tmp, path / "config.ini")
-        try:
-            os.chown(path / "config.ini", 10001, 10001)
-        except PermissionError:
-            pass
-        if before != (True, True):
-            changed += 1
+        wanted = {"enabled": "True", "broadcast_enabled": "True", "repository": GITHUB_REPOSITORY}
+        changed_keys=[]
+        for key, value in wanted.items():
+            if cfg.get("updates", key, fallback="") != value:
+                cfg.set("updates", key, value)
+                changed_keys.append(f"updates.{key}")
+        if changed_keys:
+            tmp=path / "config.ini.tmp"
+            with tmp.open("w", encoding="utf-8") as f:
+                cfg.write(f)
+            os.chmod(tmp, 0o660)
+            os.replace(tmp, path / "config.ini")
+            try:
+                os.chown(path / "config.ini", 10001, 10001)
+            except PermissionError:
+                pass
+            changed_instances += 1
         cont=docker_container(row["name"]) or {}
-        if cont.get("running"):
-            job_emit(f"Restart {row['name']} เพื่อใช้การแจ้ง GitHub Release")
-            job_helper_action("restart", row["name"])
-            restarted += 1
-    job_emit(f"เปิดการแจ้ง GitHub Release สำหรับ Manager/Full {len(rows)} instance; เปลี่ยนค่า {changed}; restart {restarted}")
+        if cont.get("running") and changed_keys:
+            result=bot_api_apply_config(path, changed_keys)
+            if result is not None and not result.get("restart_required"):
+                applied_live += 1
+                job_emit(f"ใช้การแจ้ง GitHub Release กับ {row['name']} แบบ live แล้ว ไม่ต้อง restart")
+            else:
+                job_emit(f"Restart {row['name']} เพราะ runtime API ใช้ไม่ได้หรือมีค่าที่ต้อง restart")
+                job_helper_action("restart", row["name"])
+                restarted += 1
+    job_emit(f"Manager/Full {len(rows)} instance; เปลี่ยนค่า {changed_instances}; live {applied_live}; restart {restarted}")
 
 @app.get("/system", response_class=HTMLResponse)
-def system_page(request: Request):
+def system_page(request: Request, tab: str = "overview"):
     user=require_superadmin(request)
-    return templates.TemplateResponse("system.html", {"request": request, "user":user, "system": system_status(False, include_expensive=False), "webhook": github_webhook_status(request), "release_bots": release_notification_rows(), "csrf": csrf_token(request), "version": VERSION})
+    allowed={"overview","updates","webhook","cookies","instances"}
+    tab=tab if tab in allowed else "overview"
+    return templates.TemplateResponse("system.html", {"request": request, "user":user, "system": system_status(False, include_expensive=False), "webhook": github_webhook_status(request), "release_bots": release_notification_rows(), "system_tab": tab, "csrf": csrf_token(request), "version": VERSION})
 
 
 @app.post("/system/action")
-async def system_action(request: Request, action: str = Form(...), csrf: str = Form(...)):
+async def system_action(request: Request, action: str = Form(...), csrf: str = Form(...), return_to: str = Form("/system")):
     user=require_superadmin(request); check_csrf(request, csrf)
     mapping = {
         "install-stack": ("ติดตั้ง/ตรวจ Core Stack", job_install_stack, ()),
@@ -1835,7 +1900,7 @@ async def system_action(request: Request, action: str = Form(...), csrf: str = F
         raise HTTPException(status_code=400, detail="Unknown action")
     title, func, args = mapping[action]
     jid = jobs.create(title, func, *args, owner_user_id=int(user["id"]), kind=action)
-    return job_created_response(request, jid, "/system")
+    return job_created_response(request, jid, _safe_return_to(return_to))
 
 
 @app.get("/jobs/{jid}", response_class=HTMLResponse)
@@ -2054,10 +2119,15 @@ def instance_logs(request: Request, name: str, tail: int = 250):
 
 
 @app.get("/instances/{name}/config", response_class=HTMLResponse)
-def instance_config(request: Request, name: str, saved: int = 0):
+def instance_config(request: Request, name: str, saved: str = "", tab: str = "general"):
     user=require_login(request)
     path = instance_or_404(name,user)
-    return templates.TemplateResponse("config.html", {"request": request, "user":user, "name": name, "sections": config_for_form(path, user), "saved": saved, "csrf": csrf_token(request), "version": VERSION})
+    sections=config_for_form(path, user)
+    tabs=config_tab_rows(sections)
+    allowed={row["id"] for row in tabs}
+    if tab not in allowed:
+        tab=tabs[0]["id"] if tabs else "general"
+    return templates.TemplateResponse("config.html", {"request": request, "user":user, "name": name, "sections": sections, "config_tabs": tabs, "config_tab": tab, "saved": saved, "csrf": csrf_token(request), "version": VERSION})
 
 
 @app.post("/instances/{name}/config")
@@ -2066,15 +2136,22 @@ async def instance_config_save(request: Request, name: str):
     path = instance_or_404(name,user)
     form = await request.form()
     check_csrf(request, str(form.get("csrf", "")))
-    save_config_form(path, form, user)
+    changed_keys = save_config_form(path, form, user)
+    active_tab = str(form.get("active_tab", "general"))
+    return_url = f"/instances/{name}/config?tab={urllib.parse.quote(active_tab)}"
+    if not changed_keys:
+        return RedirectResponse(return_url + "&saved=unchanged", status_code=303)
     container = docker_container(name) or {}
     if bool(container.get("running")):
+        result = bot_api_apply_config(path, changed_keys)
+        if result is not None and not result.get("restart_required"):
+            return RedirectResponse(return_url + "&saved=live", status_code=303)
         jid = jobs.create(
             f"Apply config + restart {name}", job_helper_action, "restart", name,
             owner_user_id=int(user["id"]), kind="config-restart",
         )
-        return job_created_response(request, jid, f"/instances/{name}/config?saved=1")
-    return RedirectResponse(f"/instances/{name}/config?saved=1", status_code=303)
+        return job_created_response(request, jid, return_url + "&saved=restart")
+    return RedirectResponse(return_url + "&saved=stored", status_code=303)
 
 
 @app.post("/instances/{name}/limits")

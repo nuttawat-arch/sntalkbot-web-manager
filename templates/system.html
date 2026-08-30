@@ -1,34 +1,60 @@
 {% extends "base.html" %}{% block title %}ระบบและอัปเดต{% endblock %}{% block content %}
 <h2>ตรวจระบบ / ติดตั้ง / อัปเดต</h2>
+<nav class="subtabs" aria-label="หมวดย่อยของระบบและอัปเดต">
+<a href="/system?tab=overview" {% if system_tab == 'overview' %}aria-current="page"{% endif %}>ภาพรวม</a>
+<a href="/system?tab=updates" {% if system_tab == 'updates' %}aria-current="page"{% endif %}>อัปเดต</a>
+<a href="/system?tab=webhook" {% if system_tab == 'webhook' %}aria-current="page"{% endif %}>GitHub Webhook</a>
+<a href="/system?tab=cookies" {% if system_tab == 'cookies' %}aria-current="page"{% endif %}>Cookies</a>
+<a href="/system?tab=instances" {% if system_tab == 'instances' %}aria-current="page"{% endif %}>หลาย Instance</a>
+</nav>
+
+<section {% if system_tab != 'overview' %}hidden{% endif %} aria-labelledby="system-overview-heading">
+<h3 id="system-overview-heading">ภาพรวมระบบ</h3>
 <dl>
 <dt>Web Guardian</dt><dd>{% if system.guardian %}พร้อม — Guardian {{ system.guardian.guardian_version }} | {{ system.guardian.backend }}{% else %}<strong>ยังไม่ทำงาน</strong> — การอัปเดตเว็บอาจทำให้ reverse proxy เห็น backend ขาดช่วง{% endif %}</dd>
 <dt>Web Manager</dt><dd>{{ system.web_version }} <span id="remote-web" data-local-version="{{ system.web_version }}">| กำลังตรวจรุ่นล่าสุดเบื้องหลัง…</span></dd>
 <dt>TTUHelper</dt><dd>{{ system.helper_version or 'ยังไม่ติดตั้ง' }} <span id="remote-helper" data-local-version="{{ system.helper_version or '' }}">| กำลังตรวจรุ่นล่าสุดเบื้องหลัง…</span></dd>
-<dt>SNTalkBot image</dt><dd><span id="local-bot-version">กำลังตรวจเวอร์ชันเบื้องหลัง…</span> — <code>{{ system.image }}</code></dd>
-<dt>Docker</dt><dd>{{ 'พร้อม' if system.docker_installed else 'ยังไม่ติดตั้ง' }}</dd>
-<dt>Image</dt><dd>{{ system.image }}<br><span id="local-image">Local digest: กำลังตรวจเบื้องหลัง…</span><br><span id="remote-image">Remote latest: กำลังตรวจเบื้องหลัง…</span></dd>
+<dt>SNTalkBot image</dt><dd><span id="local-bot-version">กำลังตรวจเวอร์ชันเบื้องหลัง…</span> <span id="remote-bot">| กำลังตรวจรุ่นบน GitHub…</span></dd>
 <dt>Instance root</dt><dd><code>{{ system.bots_root }}</code></dd>
 </dl>
-<p id="remote-update-status" role="status" aria-live="polite" class="muted">หน้าเว็บพร้อมใช้งานแล้ว การตรวจ GitHub/Docker Registry ทำต่อเบื้องหลังและไม่บล็อกเมนู</p>
-<h3>ติดตั้งครั้งแรก/ซ่อม Core Stack</h3><p>ระบบจะตรวจ <code>git</code>, <code>curl</code>, <code>python3</code> และ Docker ก่อนทุกครั้ง แล้วติดตั้งเฉพาะสิ่งที่ยังไม่มี จากนั้น clone/update เฉพาะ TTUHelper, ให้ installer pull SNTalkBot Docker image, รัน installer และ doctor ผลทุกขั้นตอนแสดงแบบ realtime ในหน้า Job</p>
-<form method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><button name="action" value="install-stack">ตรวจและติดตั้ง/ซ่อม Core Stack</button></form>
-<h3>อัปเดต</h3><form class="actions" method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}">
-<button name="action" value="update-web">อัปเดต Web Manager</button><button name="action" value="update-helper">อัปเดต TTUHelper + install</button><button name="action" value="pull-image">Pull SNTalkBot image ล่าสุด</button><button name="action" value="update-running">อัปเดตบอตที่กำลังรันทั้งหมด</button><button name="action" value="doctor">รัน doctor</button></form>
+<p id="remote-update-status" role="status" aria-live="polite" class="muted">หน้าเว็บพร้อมใช้งานแล้ว การตรวจรุ่นล่าสุดทำต่อเบื้องหลังและไม่บล็อกเมนู</p>
+<h4>ติดตั้งครั้งแรก/ซ่อม Core Stack</h4>
+<p>ระบบจะตรวจ <code>git</code>, <code>curl</code>, <code>python3</code> และ Docker ก่อนทุกครั้ง แล้วติดตั้งเฉพาะสิ่งที่ยังไม่มี จากนั้นติดตั้ง/ซ่อม Core Stack และ doctor โดยแสดงผลแบบ realtime ในหน้า Job</p>
+<form method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return_to" value="/system?tab=overview"><button name="action" value="install-stack">ตรวจและติดตั้ง/ซ่อม Core Stack</button></form>
+</section>
 
-<h3>GitHub Release Webhook / แจ้งรุ่นใหม่</h3>
+<section {% if system_tab != 'updates' %}hidden{% endif %} aria-labelledby="system-update-heading">
+<h3 id="system-update-heading">อัปเดต</h3>
+<p>การอัปเดตแต่ละส่วนใช้ action เดิมทั้งหมด เพียงจัดกลุ่มให้อยู่ในแท็บนี้</p>
+<form class="actions" method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return_to" value="/system?tab=updates">
+<button name="action" value="update-web">อัปเดต Web Manager</button><button name="action" value="update-helper">อัปเดต TTUHelper + install</button><button name="action" value="pull-image">Pull SNTalkBot image ล่าสุด</button><button name="action" value="update-running">อัปเดตบอตที่กำลังรันทั้งหมด</button><button name="action" value="doctor">รัน doctor</button></form>
+</section>
+
+<section {% if system_tab != 'webhook' %}hidden{% endif %} aria-labelledby="system-webhook-heading">
+<h3 id="system-webhook-heading">GitHub Release Webhook / แจ้งรุ่นใหม่</h3>
 <dl>
 <dt>Webhook receiver</dt><dd>{% if webhook.configured %}<strong>พร้อม</strong>{% else %}<strong>ยังไม่พร้อม</strong>{% endif %}</dd>
 <dt>Payload URL</dt><dd><code>{{ webhook.callback_url }}</code></dd>
 <dt>Repository</dt><dd><code>{{ webhook.repository }}</code></dd>
 <dt>GitHub ติดต่อครั้งล่าสุด</dt><dd>{% if webhook.last.received_at %}{{ webhook.last.received_at }} — {{ webhook.last.event or 'event' }}{% if webhook.last.version %} {{ webhook.last.version }}{% endif %}{% if webhook.last.accepted %} — รับแล้ว; ส่งต่อ {{ webhook.last.delivered or 0 }}/{{ webhook.last.attempted or 0 }} instance{% elif webhook.last.reason %} — {{ webhook.last.reason }}{% endif %}{% else %}ยังไม่เคยได้รับ webhook ที่ลงลายเซ็นถูกต้อง{% endif %}</dd>
 </dl>
-<p>ตั้ง Webhook ที่ GitHub repository <code>{{ webhook.repository }}</code> เพียงครั้งเดียว โดยเลือก event <strong>Releases</strong> และใช้ Secret ของหน้านี้ หลังจากนั้น Full Publish จะ push version tag และ GitHub จะสร้าง Release/ส่ง webhook อัตโนมัติ</p>
+<p>ตั้ง Webhook ที่ GitHub repository <code>{{ webhook.repository }}</code> เพียงครั้งเดียว โดยเลือก event <strong>Releases</strong> หลังจากนั้น Full Publish จะ push version tag และ GitHub จะสร้าง Release/ส่ง webhook อัตโนมัติ</p>
 <form method="post" action="/system/github-webhook-secret"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">แสดง Secret สำหรับตั้ง GitHub Webhook</button></form>
 {% if release_bots %}
 <p>Manager/Full ที่พบ: {% for bot in release_bots %}<code>{{ bot.name }}</code> ({{ 'เปิด' if bot.enabled and bot.broadcast_enabled else 'ยังไม่เปิด' }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
-<form method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><button name="action" value="enable-release-notifications">เปิดแจ้งรุ่นใหม่ผ่าน TeamTalk ให้ Manager/Full ทั้งหมด</button></form>
+<form method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return_to" value="/system?tab=webhook"><button name="action" value="enable-release-notifications">เปิดแจ้งรุ่นใหม่ผ่าน TeamTalk ให้ Manager/Full ทั้งหมด</button></form>
+<p class="minor">หากค่าเปิดอยู่แล้ว ระบบจะไม่ restart ซ้ำโดยไม่จำเป็น; การเปลี่ยนค่าที่รองรับจะถูก apply ผ่าน loopback API ทันที</p>
 {% else %}<p>ยังไม่พบ Manager/Full instance</p>{% endif %}
-<h3>Cookies ทุก Player/Full</h3><form method="post" action="/system/cookies-all" enctype="multipart/form-data" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><label for="all_cookie_file">Netscape cookies.txt</label><input id="all_cookie_file" type="file" name="cookie_file" required><button type="submit">แทน cookies ให้ Player/Full ทุกตัว</button></form>
-<h3>หลาย instance</h3><form class="actions" method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><button name="action" value="start-all">เริ่มทั้งหมด</button><button name="action" value="stop-all">หยุดทั้งหมด</button></form>
+</section>
+
+<section {% if system_tab != 'cookies' %}hidden{% endif %} aria-labelledby="system-cookies-heading">
+<h3 id="system-cookies-heading">Cookies ทุก Player/Full</h3>
+<form method="post" action="/system/cookies-all" enctype="multipart/form-data" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><label for="all_cookie_file">Netscape cookies.txt</label><input id="all_cookie_file" type="file" name="cookie_file" required><button type="submit">แทน cookies ให้ Player/Full ทุกตัว</button></form>
+</section>
+
+<section {% if system_tab != 'instances' %}hidden{% endif %} aria-labelledby="system-instances-heading">
+<h3 id="system-instances-heading">หลาย Instance</h3>
+<form class="actions" method="post" action="/system/action" data-job-form><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return_to" value="/system?tab=instances"><button name="action" value="start-all">เริ่มทั้งหมด</button><button name="action" value="stop-all">หยุดทั้งหมด</button></form>
+</section>
 <p class="warning">เมนูนี้มีเฉพาะ Super Admin งานสิทธิ์ root จะผ่าน privileged bridge ที่มี allowlist ไม่ได้เปิด root terminal ให้หน้าเว็บ</p>
 {% endblock %}

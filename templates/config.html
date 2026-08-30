@@ -1,10 +1,16 @@
 {% extends "base.html" %}{% block title %}ตั้งค่า {{ name }}{% endblock %}{% block content %}
 <h2>การตั้งค่าทั้งหมด: {{ name }}</h2>
-{% if saved %}<p class="success" role="status">บันทึก config.ini แล้ว หากบอตกำลังทำงาน Web Manager ได้สั่ง Restart ผ่าน TTUHelper ให้ค่าใหม่มีผลแล้ว; หากบอตหยุดอยู่ ค่าจะมีผลเมื่อเปิดครั้งถัดไป</p>{% endif %}
-<p>ทุก section/key ที่มีใน <code>config.ini</code> จะแสดงที่นี่ ค่า Boolean ใช้ checkbox ส่วน password/token/API key ไม่แสดงค่าปัจจุบันและปล่อยช่องว่างเพื่อคงค่าเดิม</p>
+{% if saved == 'live' %}<p class="success" role="status">บันทึกแล้วและใช้กับบอตที่กำลังทำงานทันที โดยไม่ restart</p>
+{% elif saved == 'restart' %}<p class="success" role="status">บันทึกแล้ว มีอย่างน้อยหนึ่งค่าที่ต้อง restart และ Web Manager ได้ดำเนินการให้แล้ว</p>
+{% elif saved == 'stored' %}<p class="success" role="status">บันทึกแล้ว บอตหยุดอยู่ ค่าจะพร้อมใช้เมื่อเปิดครั้งถัดไป</p>
+{% elif saved == 'unchanged' %}<p class="success" role="status">ไม่มีค่าที่เปลี่ยน จึงไม่ restart บอต</p>{% endif %}
+<p>ค่าที่รองรับการเปลี่ยนขณะทำงานจะส่งผ่าน loopback API ของ instance ทันที ค่าระดับการเชื่อมต่อ อุปกรณ์เสียง และส่วนลึกที่จำเป็นเท่านั้นจึงจะ restart</p>
 {% if user.role != 'superadmin' %}<p class="minor">เพื่อป้องกันการย้ายบอตไปยัง TeamTalk Server ที่เจ้าของไม่ได้รับอนุญาต ค่า host/ports/encryption และบัญชี TeamTalk ของบอตจะอ่านได้แต่แก้ไม่ได้หลังยืนยันเจ้าของแล้ว หากจำเป็นต้องเปลี่ยนให้ Super Admin เป็นผู้ดำเนินการ</p>{% endif %}
-<form method="post" action="/instances/{{ name }}/config"><input type="hidden" name="csrf" value="{{ csrf }}">
-{% for section in sections %}<details open><summary><strong>[{{ section.name }}]</strong></summary><fieldset><legend>{{ section.name }}</legend>
+<nav class="subtabs" aria-label="หมวดการตั้งค่าของ {{ name }}">
+{% for tab in config_tabs %}<a href="/instances/{{ name }}/config?tab={{ tab.id }}" {% if config_tab == tab.id %}aria-current="page"{% endif %}>{{ tab.label }}</a>{% endfor %}
+</nav>
+<form method="post" action="/instances/{{ name }}/config"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="active_tab" value="{{ config_tab }}">
+{% for section in sections %}<section {% if section.tab != config_tab %}hidden{% endif %} aria-labelledby="config-section-{{ loop.index }}"><fieldset><legend id="config-section-{{ loop.index }}">[{{ section.name }}]</legend>
 {% for f in section.fields %}
 <label for="cfg__{{ f.section }}__{{ f.key }}"><strong>{{ f.label }}</strong>{% if f.locked %} — ล็อกสำหรับบัญชีผู้ใช้ทั่วไป{% endif %}</label>
 <p id="desc__{{ f.section }}__{{ f.key }}" class="minor">{{ f.description }} <code>{{ f.section }}.{{ f.key }}</code></p>
@@ -22,6 +28,6 @@
 {% else %}
 <input id="cfg__{{ f.section }}__{{ f.key }}" name="cfg__{{ f.section }}__{{ f.key }}" aria-describedby="desc__{{ f.section }}__{{ f.key }}" value="{{ f.value }}" {% if f.locked %}readonly aria-readonly="true"{% endif %}>
 {% endif %}
-{% endfor %}</fieldset></details>{% endfor %}
+{% endfor %}</fieldset></section>{% endfor %}
 <button type="submit">บันทึกการตั้งค่า</button></form>
 {% endblock %}

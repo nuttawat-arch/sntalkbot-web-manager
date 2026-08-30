@@ -1,4 +1,4 @@
-# Development Report — Web Manager 1.1.20
+# Development Report — Web Manager 1.1.22
 
 - Central Global Broadcast stored in Web Manager SQLite and delivered by a central scheduler over each bot's loopback Bearer API.
 - Running-instance Config Save now schedules TTUHelper restart so persisted config becomes runtime behavior.
