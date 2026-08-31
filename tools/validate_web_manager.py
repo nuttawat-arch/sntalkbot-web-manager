@@ -101,7 +101,7 @@ checks={
  'self-update installer can defer backend restart safely':'SNWEB_DEFER_RESTART' in installer and 'Guardian remains online' in installer and 'First Guardian transition scheduled' in installer,
  'self-update uses fresh staged checkout, rollback and scheduled backend restart':'replace_from_fresh_clone' in bridge and 'rollback_source_replace' in bridge and 'git","clone","--depth","1"' in bridge and 'SNWEB_DEFER_RESTART=1' in bridge and 'systemd-run' in bridge and '--on-active=2s' in bridge and 'GUARDIAN_TRANSITION_MARKER' in bridge,
  'privileged bridge is only sudo target':'NOPASSWD: $ROOT_BRIDGE *' in installer and 'snweb-root' in installer,
- 'root bridge allowlist':'action not allowed' in bridge and 'migrate-ttmediabot' in bridge and 'install-stack' in bridge and 'bot-config-template' in bridge and 'bot-image-version' in bridge and 'container-name-check' in bridge,
+ 'root bridge allowlist':'action not allowed' in bridge and 'migrate-ttmediabot' in bridge and 'install-stack' in bridge and 'bot-config-template' in bridge and 'bot-default-cookies' in bridge and 'bot-image-version' in bridge and 'container-name-check' in bridge,
  'Docker tenant isolation':'managed_container_json' in bridge and 'refusing unmanaged Docker container' in bridge and 'com.ttutilities.helper' in bridge and 'com.ttutilities.data' in bridge,
  'new-instance Docker name collision preflight':'container-name-check' in app and 'Docker container name is already in use' in bridge,
  'installer preflight':all(x in installer for x in ('has python3','has git','has curl','if has docker')),
@@ -110,6 +110,7 @@ checks={
  'rollback restores running Web Manager process as well as source':'systemctl restart sntalkbot-web-manager' in (root/'install_remote.sh').read_text(encoding='utf-8') and 'project_name == "Web Manager"' in bridge and '["systemctl","restart","sntalkbot-web-manager"]' in bridge,
  'production does not require /opt/sntalkbot source':'SNWEB_BOT_SOURCE' not in app and 'SNWEB_BOT_SOURCE' not in bridge and 'SNWEB_BOT_SOURCE' not in installer and 'update-bot-source' not in app and 'update-bot-source' not in bridge,
  'config template comes from Docker image':'bot-config-template' in app and 'image_text("/app/config_default.ini")' in bridge and '["docker","run","--rm","--entrypoint","cat",image_name(),path]' in bridge,
+ 'new Player/Full instance gets bundled default cookies from Docker image':'bot-default-cookies' in app and 'get_default_bot_cookies()' in app and 'image_text("/app/defaults/cookies.txt")' in bridge and '(path / "cookies.txt").write_text(get_default_bot_cookies()' in app,
  'migration template comes from Docker image':'TemporaryDirectory(prefix="snweb-migrate-")' in bridge and 'template.write_text(image_text("/app/config_default.ini")' in bridge,
  'migration role is explicit in job output':'ประเภทบอตที่เลือก:' in app and 'นโยบาย config:' in app,
  'CloudPanel loopback default':'BIND="${SNWEB_BIND:-127.0.0.1}"' in installer and 'PORT="${SNWEB_PORT:-28765}"' in installer,
@@ -342,6 +343,8 @@ def fake_root(args, timeout=120, check=False):
     a=tuple(str(x) for x in args); calls.append(('root',a))
     if a and a[0]=='bot-config-template':
         return 0, '[server]\naddress=\ntcp_port=10333\nudp_port=10333\nencrypted=False\nusername=\npassword=\n[bot]\nlanguage=th\nnickname=SN TalkBot\ndefault_channel=/\nchannel_password=\nstatus_message=auto\n[accounts]\nauthorized_users=\n[features]\nplayer_enabled=True\nserver_management_enabled=True\n[playback]\ncookiefile_path=/app/data/cookies.txt\n'
+    if a and a[0]=='bot-default-cookies':
+        return 0,'# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tPREF\tbootstrap\n'
     if a and a[0]=='container-name-check': return 0,''
     if a and a[0]=='docker-logs': return 0,'hello-log\n'
     if a and a[0]=='docker-inspect': return 1,''
@@ -370,7 +373,10 @@ for _ in range(100):
     time.sleep(.02)
 assert mod.jobs.get(jid).get('status')=='success', mod.jobs.get(jid)
 assert (mod.bots_root()/'actionbot'/'config.ini').is_file()
+assert (mod.bots_root()/'actionbot'/'cookies.txt').is_file()
+assert 'bootstrap' in (mod.bots_root()/'actionbot'/'cookies.txt').read_text()
 assert any(x[1] and x[1][0]=='container-name-check' for x in calls)
+assert any(x[1] and x[1][0]=='bot-default-cookies' for x in calls)
 assert any(x[0]=='root-stdin' and x[1]==('verify-teamtalk-admin',) for x in calls)
 # Logs
 r=client.get('/instances/actionbot/logs'); assert r.status_code==200 and 'hello-log' in r.text

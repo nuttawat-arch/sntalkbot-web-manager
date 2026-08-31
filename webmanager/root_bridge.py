@@ -517,6 +517,12 @@ def main():
     if action=="bot-config-template":
         if args: raise SystemExit("unexpected arguments")
         sys.stdout.write(image_text("/app/config_default.ini")); return 0
+    if action=="bot-default-cookies":
+        if args: raise SystemExit("unexpected arguments")
+        # This is the bundled public bootstrap shipped in the bot image, never a
+        # user's persistent replacement.  It is returned only to the local Web
+        # Manager so a newly-created Player/Full instance gets its own copy.
+        sys.stdout.write(image_text("/app/defaults/cookies.txt")); return 0
     if action=="bot-image-version":
         if args: raise SystemExit("unexpected arguments")
         sys.stdout.write(image_text("/app/VERSION").strip()+"\n"); return 0

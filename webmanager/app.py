@@ -999,6 +999,22 @@ def get_config_template():
     raise RuntimeError("ไม่สามารถอ่าน config_default.ini จาก SNTalkBot Docker image ได้ กรุณา Pull image แล้วลองใหม่")
 
 
+
+
+def get_default_bot_cookies():
+    rc, out = root_run(["bot-default-cookies"], timeout=60)
+    if rc != 0:
+        raise RuntimeError("ไม่สามารถอ่าน default cookies จาก SNTalkBot Docker image ได้ กรุณา Pull image แล้วลองใหม่")
+    rows = 0
+    for raw in out.splitlines():
+        if not raw or (raw.startswith("#") and not raw.startswith("#HttpOnly_")):
+            continue
+        if len(raw.split("\t")) >= 7:
+            rows += 1
+    if rows <= 0:
+        raise RuntimeError("default cookies ใน SNTalkBot Docker image ไม่ใช่ Netscape cookie set ที่ใช้งานได้")
+    return out if out.endswith("\n") else out + "\n"
+
 def bot_image_version():
     if not docker_installed():
         return None
@@ -1067,14 +1083,20 @@ def create_instance(values: dict):
         )
         os.chmod(path / "config.ini", 0o660)
         os.chmod(path / "instance.conf", 0o640)
+        if player:
+            # Create the persistent bootstrap cookie immediately, from the same
+            # Docker image as config_default.ini. A later TTUHelper cks replaces
+            # this file; ordinary updates never overwrite the instance copy.
+            (path / "cookies.txt").write_text(get_default_bot_cookies(), encoding="utf-8")
+            os.chmod(path / "cookies.txt", 0o640)
         try:
             os.chown(path, 10001, 10001)
             os.chown(path / "config.ini", 10001, 10001)
             os.chown(path / "instance.conf", 10001, 10001)
+            if player:
+                os.chown(path / "cookies.txt", 10001, 10001)
         except PermissionError:
             pass
-        # Intentionally do not create cookies.txt. The bot image bootstraps its
-        # bundled project default on first start; a future TTUHelper cks replaces it.
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     with _SNAPSHOT_LOCK:

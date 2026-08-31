@@ -1,4 +1,10 @@
-# Development Report — Web Manager 1.1.22
+# Development Report — SNTalkBot Web Manager 1.1.23
+
+- การสร้าง Full/Player อ่าน bundled default cookies จาก Docker image ผ่าน root bridge action แบบ allowlisted แล้วสร้าง persistent `cookies.txt` ทันที
+- ตรวจรูปแบบ Netscape cookie ก่อนเขียน และไม่แสดงค่า cookie ใน UI/job log
+- Manager-only ไม่สร้าง YouTube cookie
+- action, tabs, live-config, GitHub webhook และ tenant isolation เดิมไม่เปลี่ยน
+
 
 - Central Global Broadcast stored in Web Manager SQLite and delivered by a central scheduler over each bot's loopback Bearer API.
 - Running-instance Config Save now schedules TTUHelper restart so persisted config becomes runtime behavior.
